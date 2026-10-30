@@ -644,7 +644,7 @@ void setup() {
         } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
             WIFI_DEBUG_PRINTLN("WiFi connected successfully! IP: %s", WiFi.localIP().toString().c_str());
             wifi_needs_reconnect = false;
-            offband::MinimalWebPortal::begin(&board, the_mesh.getNodePrefs()->node_name, the_mesh.getRole());
+            offband::MinimalWebPortal::begin(&board, the_mesh.getNodePrefs()->node_name, "companion");
         }
     });
 #endif

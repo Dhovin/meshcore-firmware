@@ -1,4 +1,5 @@
 #include "MyMesh.h"
+#include "AbstractUITask.h"
 
 #include <Arduino.h> // needed for PlatformIO
 #ifdef ENABLE_WIFI_INTERFACE
@@ -1196,7 +1197,6 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   // we only want to show text messages on display, not cli data
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
   if (should_display && _ui) {
-    _ui->newMsg(path_len, from.name, text, offline_queue_len);
     // #510: a DM is by definition addressed to this node, so it sounds in both ALL and
     // SELF; only NONE suppresses it. No text match needed.
     //
@@ -1544,10 +1544,9 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     // Get the channel name from the channel index
     ChannelDetails channel_details;
     if (!getChannel(channel_idx, channel_details)) {
-      channel_details.channel_name[0] = 0;
+      channel_details.name[0] = 0;
     }
     _listener->onChannelMessageRecv(pkt, channel_details, text);
-  }
   }
 }
 
@@ -3777,11 +3776,6 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else if (payload_len > MAX_GROUP_DATA_LENGTH) {
       MESH_DEBUG_PRINTLN("CMD_SEND_CHANNEL_DATA payload too long: %d > %d", (int)payload_len, (int)MAX_GROUP_DATA_LENGTH);
-      MESH_DEBUG_PRINTLN("CMD_SEND_CHANNEL_DATA payload too long: %d > %d",
-    } else if (payload_len > MAX_GROUP_DATA_LENGTH) {
-      MESH_DEBUG_PRINTLN("CMD_SEND_CHANNEL_DATA payload too long: %d > %d", (int)payload_len, (int)MAX_GROUP_DATA_LENGTH);
-    } else if (payload_len > MAX_GROUP_DATA_LENGTH) {
-      MESH_DEBUG_PRINTLN("CMD_SEND_CHANNEL_DATA payload too long: %d > %d", payload_len, MAX_GROUP_DATA_LENGTH);
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else if (sendGroupData(channel.channel, path, path_len, data_type, payload, payload_len)) {
       writeOKFrame();

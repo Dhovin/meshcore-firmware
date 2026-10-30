@@ -149,6 +149,8 @@ struct SentPktHash {
   bool     used;               // false = empty slot (a hash of all-zero is legal)
 };
 
+class AbstractUITask;
+
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
   class Listener {
@@ -174,7 +176,16 @@ public:
 
   void begin();
   void startInterface(BaseSerialInterface &serial);
-  void setListener(Listener* listener) { _listener = listener; }
+  void setListener(Listener* listener) {
+    _listener = listener;
+    _ui = (AbstractUITask*)listener;
+  }
+  void setUI(AbstractUITask* ui) {
+    _ui = ui;
+    _listener = (Listener*)ui;
+  }
+  AbstractUITask* getUI() const { return _ui; }
+  const char* getRole() const { return "companion"; }
 
   const char *getNodeName();
   NodePrefs *getNodePrefs();
@@ -649,6 +660,7 @@ private:
   uint32_t pending_req;   // pending _BINARY_REQ
   BaseSerialInterface *_serial;
   Listener* _listener;
+  AbstractUITask* _ui = nullptr;
 
   ContactsIterator _iter;
   uint32_t _iter_filter_since;

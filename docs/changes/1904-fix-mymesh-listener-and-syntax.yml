@@ -1,0 +1,4 @@
+schema_version: 1
+issue: 1904
+impact: none
+reason: Wired AbstractUITask to MyMesh listener, resolved channel name property in onChannelMessageRecv, and fixed duplicate macro invocation in MyMesh.cpp.
