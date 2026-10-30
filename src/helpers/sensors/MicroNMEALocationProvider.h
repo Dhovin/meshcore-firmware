@@ -74,6 +74,8 @@ private :
         if (m) {
             gsaMode() = m;
             gsaAtMs() = millis();
+        }
+    }
 #ifdef GPS_L76K
     void configureL76K() {
         // Reapply the constellation mode at each provider start instead of

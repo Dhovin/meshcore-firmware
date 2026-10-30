@@ -1,25 +1,2 @@
-# Curated Heltec V4 release env set for release.yml.
-# Only Heltec V4 targets are built and released.
-# One PlatformIO env per line. Lines starting with # and blank lines are ignored.
-
-# Heltec V4 OLED (ESP32-S3)
+# Curated Heltec V4 release target
 heltec_v4_companion_observer_wifi
-heltec_v4_companion_radio_ble
-heltec_v4_companion_radio_usb
-heltec_v4_repeater
-heltec_v4_room_server
-
-# Heltec V4 TFT (ESP32-S3)
-heltec_v4_tft_companion_observer_wifi
-heltec_v4_tft_companion_radio_ble
-heltec_v4_tft_companion_radio_usb
-heltec_v4_tft_companion_radio_ble_gui
-heltec_v4_tft_repeater
-heltec_v4_tft_room_server
-
-# Heltec V4-R8 SAW (ESP32-S3)
-heltec_v4_r8_companion_observer_wifi
-heltec_v4_r8_companion_radio_ble
-heltec_v4_r8_companion_radio_usb
-heltec_v4_r8_tft_companion_radio_ble_gui
-heltec_v4_r8_repeater
