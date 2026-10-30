@@ -8,132 +8,50 @@
 #include <nvs_flash.h>
 #include <target.h>
 
-#if defined(ADMIN_PASSWORD) && !defined(DISABLE_WIFI_OTA)   // Repeater or Room Server only
+#if !defined(DISABLE_WIFI_OTA)
 #include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncElegantOTA.h>
+#include "helpers/wifi/MinimalWebPortal.h"
 
-#include <SPIFFS.h>
-
-// Static state for both AP-mode and STA-mode OTA. AsyncWebServer survives
-// the function returning (lives on heap), and we need a handle to it for
-// stopOTAUpdate() and getOTAStatus().
-static AsyncWebServer* g_ota_server = nullptr;
-static char g_ota_url[80] = {0};       // last known OTA URL ("http://x.x.x.x/update")
-static bool g_ota_is_sta_mode = false; // true if STA-mode, false if AP-mode (or not running)
+static char g_ota_url[80] = {0};
+static bool g_ota_is_sta_mode = false;
 
 bool ESP32Board::startOTAUpdate(const char* id, char reply[]) {
-  // Existing AP-mode OTA path. Spins up a softAP "MeshCore-OTA" — used as
-  // fallback when STA WiFi is unavailable (credential rotation, AP failure).
-  inhibit_sleep = true;   // prevent sleep during OTA
+  inhibit_sleep = true;
   WiFi.softAP("MeshCore-OTA", NULL);
-
-  sprintf(reply, "Started: http://%s/update", WiFi.softAPIP().toString().c_str());
-  snprintf(g_ota_url, sizeof(g_ota_url), "http://%s/update",
-           WiFi.softAPIP().toString().c_str());
   g_ota_is_sta_mode = false;
+  offband::MinimalWebPortal::begin(this, id, "Repeater", nullptr);
+  snprintf(g_ota_url, sizeof(g_ota_url), "%s/update", offband::MinimalWebPortal::getUrl());
+  snprintf(reply, 80, "Started: %s", g_ota_url);
   MESH_DEBUG_PRINTLN("startOTAUpdate: %s", reply);
-
-  // #327: snprintf, not sprintf. `id` is node_name[32] (31 chars max) and the model
-  // string grew when getManufacturerName() started reporting the FEM part, so the
-  // worst case now lands exactly on the 60-byte capacity with zero margin. Bounded so
-  // a future longer model string truncates instead of corrupting memory.
-  static char id_buf[60];
-  snprintf(id_buf, sizeof(id_buf), "%s (%s)", id, getManufacturerName());
-  static char home_buf[90];
-  snprintf(home_buf, sizeof(home_buf), "<H2>Hi! I am a MeshCore Repeater. ID: %s</H2>", id);
-
-  // Free any prior server before allocating a new one.
-  if (g_ota_server) { delete g_ota_server; g_ota_server = nullptr; }
-  g_ota_server = new AsyncWebServer(80);
-
-  g_ota_server->on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/html", home_buf);
-  });
-  g_ota_server->on("/log", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SPIFFS, "/packet_log", "text/plain");
-  });
-
-  AsyncElegantOTA.setID(id_buf);
-  AsyncElegantOTA.begin(g_ota_server);    // Start ElegantOTA (no auth in AP mode — fallback path)
-  g_ota_server->begin();
-
   return true;
 }
 
-// D4 / issue #58: STA-mode OTA. Caller MUST ensure WiFi is up in STA mode
-// before invoking — typically by the user issuing `wifi on N` over LoRa
-// admin CLI first.
 bool ESP32Board::startOTAUpdateOverSTA(const char* id, const char* password, char reply[]) {
-  // Verify STA WiFi is actually up. If not, refuse cleanly.
   if (WiFi.status() != WL_CONNECTED) {
     strcpy(reply, "ERR: STA WiFi not connected");
     return false;
   }
-
-  // #598: a prior OTA server may still be up — most often a stale AP-mode server
-  // from an earlier attempt, or a previous STA session that was never stopped.
-  // Rather than refusing (which forced an out-of-band `ota end` before a retry
-  // could work), tear the old server down and continue. stopOTAUpdate() ends and
-  // frees the server, clears g_ota_url, drops any AP interface, and clears
-  // inhibit_sleep — which we re-arm just below. STA WiFi was already confirmed up
-  // by the WL_CONNECTED check above and is left untouched.
-  if (g_ota_server != nullptr) {
-    stopOTAUpdate();
-  }
-
-  inhibit_sleep = true;   // prevent sleep during OTA
-
-  IPAddress ip = WiFi.localIP();
-  snprintf(g_ota_url, sizeof(g_ota_url), "http://%s/update", ip.toString().c_str());
-  snprintf(reply, 80, "Started: %s", g_ota_url);
+  inhibit_sleep = true;
   g_ota_is_sta_mode = true;
+  offband::MinimalWebPortal::begin(this, id, "Node", password);
+  snprintf(g_ota_url, sizeof(g_ota_url), "%s/update", offband::MinimalWebPortal::getUrl());
+  snprintf(reply, 80, "Started: %s", g_ota_url);
   MESH_DEBUG_PRINTLN("startOTAUpdateOverSTA: %s", reply);
-
-  static char id_buf[60];
-  snprintf(id_buf, sizeof(id_buf), "%s (%s)", id, getManufacturerName());
-  static char home_buf[120];
-  snprintf(home_buf, sizeof(home_buf),
-           "<H2>MeshCore Repeater %s</H2><p><a href=\"/update\">Update firmware</a></p>", id);
-
-  g_ota_server = new AsyncWebServer(80);
-
-  g_ota_server->on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/html", home_buf);
-  });
-  g_ota_server->on("/log", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(SPIFFS, "/packet_log", "text/plain");
-  });
-
-  AsyncElegantOTA.setID(id_buf);
-  // HTTP Basic Auth — username fixed "admin", password from caller (admin password).
-  // Note: AsyncElegantOTA.begin() supports (server, user, pass) overload.
-  AsyncElegantOTA.begin(g_ota_server, "admin", password);
-  g_ota_server->begin();
-
   return true;
 }
 
 void ESP32Board::stopOTAUpdate() {
-  if (g_ota_server) {
-    g_ota_server->end();
-    delete g_ota_server;
-    g_ota_server = nullptr;
-  }
+  offband::MinimalWebPortal::stop();
   g_ota_url[0] = 0;
   g_ota_is_sta_mode = false;
-  inhibit_sleep = false;  // allow sleep again
-
-  // If we were in AP mode, also tear down the softAP.
-  // (STA-mode leaves WiFi up because the caller's `wifi on N` controls that.)
+  inhibit_sleep = false;
   if (WiFi.getMode() & WIFI_AP) {
     WiFi.softAPdisconnect(true);
   }
 }
 
 bool ESP32Board::getOTAStatus(char* buf, size_t buflen) {
-  if (g_ota_server == nullptr) {
+  if (!offband::MinimalWebPortal::isRunning()) {
     snprintf(buf, buflen, "OTA not running");
     return false;
   }

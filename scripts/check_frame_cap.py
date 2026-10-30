@@ -134,10 +134,14 @@ TRANSPORT_OWNED = {
     "src/helpers/esp32/SerialBLEInterface.cpp":
         "pins the local ATT MTU with setMTU(MAX_FRAME_SIZE) and passes the buffer bound "
         "to deliverableFrame(); rejects over-long frames against its own buffer",
-    "src/helpers/esp32/SerialWifiInterface.h":
+    "src/helpers/wifi/SerialWifiInterface.h":
         "declares the queue frame buffer",
-    "src/helpers/esp32/SerialWifiInterface.cpp":
+    "src/helpers/wifi/SerialWifiInterface.cpp":
         "rejects frames larger than its own buffer on send and receive",
+    "src/helpers/rp2040/SerialBLEInterface.h":
+        "declares the queue frame buffer",
+    "src/helpers/rp2040/SerialBLEInterface.cpp":
+        "passes the buffer bound to deliverableFrame(); rejects over-long frames against its own buffer",
     "src/helpers/ethernet/SerialEthernetInterface.h":
         "declares _rx_buf and the queue frame buffer",
     "src/helpers/ethernet/SerialEthernetInterface.cpp":

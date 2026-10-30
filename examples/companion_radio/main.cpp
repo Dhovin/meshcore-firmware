@@ -2,6 +2,9 @@
 #include <Mesh.h>
 #include <SafeBoot.h>
 #include "MyMesh.h"
+#if defined(ESP32)
+#include <helpers/wifi/MinimalWebPortal.h>
+#endif
 
 // #740: raw-UART0 boot beacon. This translation unit owns the single
 // constructor(101) instance; see helpers/BootBeacon.h for why it exists.
@@ -683,23 +686,13 @@ void setup() {
               WiFi.disconnectReasonName((wifi_err_reason_t)info.wifi_sta_disconnected.reason));
             wifi_needs_reconnect = true;
         } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-            WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
+            WIFI_DEBUG_PRINTLN("WiFi connected successfully! IP: %s", WiFi.localIP().toString().c_str());
             wifi_needs_reconnect = false;
+            offband::MinimalWebPortal::begin(&board, the_mesh.getNodePrefs()->node_name, the_mesh.getRole());
         }
     });
 #endif
 
-  WiFi.begin(WIFI_SSID, WIFI_PWD);
-  // PORTED to upstream's MultiSerialInterface (1.17.0): the ESP32 branch used to
-  // select ONE serial_interface here and call the_mesh.startInterface() on it.
-  // interface_manager now owns registration (BLE/WiFi/USB/Ethernet/HardwareSerial
-  // are registered around this block) and is started once below, so keeping the
-  // old selection would start the mesh interface twice. Offband observer wiring
-  // moved to just after startInterface(interface_manager) -- it needs self_id.
-  CW_PHASE("ESP32:before wifi_interface.begin");
-  wifi_interface.begin(TCP_PORT);
-  interface_manager.addInterface(InterfaceType::WiFi, &wifi_interface);
-  CW_PHASE("ESP32:post wifi_interface.begin");
     WIFI_DEBUG_PRINTLN("connecting to %s", wifi_ssid);
 
 #if defined(RP2040_PLATFORM)
