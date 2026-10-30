@@ -175,11 +175,11 @@ jobs:
           echo "Purged $purged stale asset(s)."
 
       - name: Extract release body
+        env:
+          INPUT_VER: ${{ steps.rel.outputs.version }}
         run: |
-          ver="${{ steps.rel.outputs.version }}"
-          if [ -z "$ver" ]; then
-            ver="${GITHUB_REF_NAME#offband-}"; ver="${ver#crosswire-}"; ver="${ver#meshcore-}"; ver="${ver#heltec-v4-}"
-          fi
+          ver="${INPUT_VER:-${GITHUB_REF_NAME}}"
+          ver="${ver#offband-}"; ver="${ver#crosswire-}"; ver="${ver#meshcore-}"; ver="${ver#heltec-v4-}"
           exact="${ver#v}"                         # the version as tagged: 1.5.0-beta7
           base="${exact%-rc*}"; base="${base%-beta*}"  # the base version:   1.5.0
           prose="release-notes/${exact}.md"
@@ -202,7 +202,7 @@ jobs:
             done
           fi
           if [ ! -s body.md ]; then
-            echo "(Heltec V4 Firmware release ${ver}.)" > body.md
+            echo "(No CHANGELOG entry for ${ver}.)" > body.md
           fi
           # Append the static "which file do I download?" flashing guide to every release
           cat .github/release-footer.md >> body.md 2>/dev/null || true

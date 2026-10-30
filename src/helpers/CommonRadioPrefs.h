@@ -1,4 +1,7 @@
 #pragma once
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include "ConfigSerializer.h"
 #include "KeyValueStore.h"
 
@@ -64,6 +67,29 @@ public:
 
   bool handleCommand(const char* command, uint32_t sender_timestamp, char* reply);
 
-  bool setByKey(const char* key, const char* value) override;   // for dynamic key/value access
-  bool getByKey(const char* key, char* value, size_t max_len) override;
+  bool setByKey(const char* key, const char* value) override {
+    if (strcmp(key, "fem_rxgain") == 0) {
+      setFEMRxGain(atoi(value));
+      markDirty();
+      return true;
+    }
+    if (strcmp(key, "fem_txgain") == 0) {
+      setFEMTxGain(atoi(value));
+      markDirty();
+      return true;
+    }
+    return false;
+  }
+
+  bool getByKey(const char* key, char* value, size_t max_len) override {
+    if (strcmp(key, "fem_rxgain") == 0) {
+      snprintf(value, max_len, "%d", (uint32_t)getFEMRxGain());
+      return true;
+    }
+    if (strcmp(key, "fem_txgain") == 0) {
+      snprintf(value, max_len, "%d", (uint32_t)getFEMTxGain());
+      return true;
+    }
+    return false;
+  }
 };

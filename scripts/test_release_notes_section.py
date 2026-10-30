@@ -106,7 +106,8 @@ def run(block: str, tag: str, changelog: str, footer: str | None = FOOTER,
     `prose` maps a release-notes basename (the version as tagged, no extension) to
     its content, e.g. {"1.5.0-beta7": "PROSE LINE\\n"} (#1306).
     """
-    with tempfile.TemporaryDirectory() as tmp:
+    kwargs = {"ignore_cleanup_errors": True} if sys.version_info >= (3, 10) else {}
+    with tempfile.TemporaryDirectory(**kwargs) as tmp:
         with open(os.path.join(tmp, "CHANGELOG.md"), "w", encoding="utf-8") as fh:
             fh.write(changelog)
         if prose:
@@ -125,7 +126,8 @@ def run(block: str, tag: str, changelog: str, footer: str | None = FOOTER,
             # `-e` because GitHub runs every `run:` step as `bash -e {0}`: a step that
             # works in a plain shell and aborts under -e is a release that does not
             # publish.
-            proc = subprocess.run(["bash", "-e", "-c", block], cwd=tmp, env=env,
+            bash_cmd = r"C:\Program Files\Git\bin\bash.exe" if (os.name == "nt" and os.path.exists(r"C:\Program Files\Git\bin\bash.exe")) else "bash"
+            proc = subprocess.run([bash_cmd, "-e", "-c", block], cwd=tmp, env=env,
                                   capture_output=True, text=True)
         except FileNotFoundError:
             fail("bash is required to run the workflow's own extraction step")
