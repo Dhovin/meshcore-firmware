@@ -12,6 +12,7 @@
 #include "esp_system.h"
 #include "esp_sleep.h"
 #include <driver/rtc_io.h>
+#include <helpers/KeyValueStore.h>
 
 inline int g_mock_esp32_poweroff_calls = 0;
 

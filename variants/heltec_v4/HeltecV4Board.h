@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <helpers/RefCountedDigitalPin.h>
+#include <helpers/KeyValueStore.h>
 #include <helpers/ESP32Board.h>
 #include "LoRaFEMControl.h"
 

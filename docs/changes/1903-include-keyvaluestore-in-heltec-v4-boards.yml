@@ -1,0 +1,4 @@
+schema_version: 1
+issue: 1903
+impact: none
+reason: Included KeyValueStore header in Heltec V4 and V4 R8 board headers to resolve mock and native compilation errors.

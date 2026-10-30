@@ -4,6 +4,7 @@
 #include <driver/rtc_io.h>
 #include <helpers/ESP32Board.h>
 #include <helpers/RefCountedDigitalPin.h>
+#include <helpers/KeyValueStore.h>
 #include "LoRaFEMControl.h"
 
 #ifndef ADC_MULTIPLIER
