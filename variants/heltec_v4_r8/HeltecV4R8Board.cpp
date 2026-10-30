@@ -155,20 +155,6 @@ const char* HeltecV4R8Board::getManufacturerName() const {
 #endif
 }
 
-bool HeltecV4R8Board::setLoRaFemLnaEnabled(bool enable) {
-  if (!loRaFEMControl.isLnaCanControl()) {
-    return false;
-  }
-
-  loRaFEMControl.setLNAEnable(enable);
-  loRaFEMControl.setRxModeEnable();
-  return true;
-}
-
-bool HeltecV4R8Board::isLoRaFemLnaEnabled() const {
-  return loRaFEMControl.isLNAEnabled();
-}
-
 void HeltecV4R8Board::attachDynamicPrefs(KeyValueStore* prefs) {
   _prefs = prefs;
 

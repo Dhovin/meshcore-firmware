@@ -1,0 +1,4 @@
+schema_version: 1
+issue: 1902
+impact: none
+reason: Fixed US-English identifiers in NRF52Board and MeshCore, and resolved duplicate private FEM declarations in HeltecV4R8Board.

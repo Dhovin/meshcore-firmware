@@ -13,8 +13,6 @@
 class HeltecV4R8Board : public ESP32Board {
   KeyValueStore* _prefs = NULL;
 
-  bool setLoRaFemLnaEnabled(bool enable);
-  bool isLoRaFemLnaEnabled() const;
 protected:
   float adc_mult = ADC_MULTIPLIER;
   bool _tx_active = false;   // #1339: between onBeforeTransmit and onAfterTransmit

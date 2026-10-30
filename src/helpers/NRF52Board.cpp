@@ -154,7 +154,7 @@ static void __attribute__((constructor(101))) nrf52_early_reset_capture() {
 }
 
 void NRF52Board::pwrmgtInit() {
-  if (pwrmgt_initialised) return;
+  if (pwrmgt_initialized) return;
   // Copy early-captured register values
   reset_reason = g_nrf52_reset_reason;
   shutdown_reason = g_nrf52_shutdown_reason;
@@ -181,7 +181,7 @@ void NRF52Board::pwrmgtInit() {
     MESH_DEBUG_PRINTLN("PWRMGT: Reset = %s (0x%lX)",
       getResetReasonString(reset_reason), (unsigned long)reset_reason);
   }
-  pwrmgt_initialised = true;
+  pwrmgt_initialized = true;
 }
 
 const char* NRF52Board::getResetReasonString(uint32_t reason) {
@@ -289,7 +289,7 @@ void NRF52Board::enterSystemOff(uint8_t reason) {
 
 void NRF52Board::configureVoltageWake(uint8_t ain_channel, uint8_t lpcomp_refsel) {
   pwrmgtWakeArmVbus();
-  if (!isPwrMgtInitialised()) {
+  if (!isPwrMgtInitialized()) {
     MESH_DEBUG_PRINTLN("PWRMGT: LPCOMP wake not armed. Reason: Power Management not initialised");
     return;
   }

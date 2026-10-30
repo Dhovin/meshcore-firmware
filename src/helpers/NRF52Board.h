@@ -27,7 +27,7 @@ struct PowerMgtConfig {
 
 class NRF52Board : public mesh::MainBoard {
 private:
-  bool pwrmgt_initialised = false;
+  bool pwrmgt_initialized = false;
 
 protected:
   uint8_t startup_reason;
@@ -97,7 +97,7 @@ public:
   uint8_t getShutdownReason() const override { return shutdown_reason; }
   const char* getResetReasonString(uint32_t reason) override;
   const char* getShutdownReasonString(uint8_t reason) override;
-  bool isPwrMgtInitialised() const override { return pwrmgt_initialised; }
+  bool isPwrMgtInitialized() const override { return pwrmgt_initialized; }
   #ifdef PWRMGT_LPCOMP_AIN
     bool getWakeLpcompSupported() const override { return true; }
   #endif

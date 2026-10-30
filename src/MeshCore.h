@@ -154,7 +154,7 @@ public:
   }
 
   // Power management interface (boards with power management override these)
-  virtual bool isPwrMgtInitialised() const { return false; }
+  virtual bool isPwrMgtInitialized() const { return false; }
   virtual bool isExternalPowered() { return false; }
   // True while a board can identify an active battery-charging source.
   virtual bool isChargerActive() { return false; }
