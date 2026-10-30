@@ -18,7 +18,7 @@ QCC = ROOT / "variants" / "qcc_badge"
 
 
 def pin_map(path):
-    src = path.read_text()
+    src = re.sub(r"//[^\n]*", "", path.read_text())
     body = src[src.index("g_ADigitalPinMap"):]
     body = body[body.index("{") + 1: body.index("}")]
     return [int(t) for t in re.findall(r"\d+", body)]

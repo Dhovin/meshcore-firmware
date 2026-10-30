@@ -50,7 +50,7 @@ BOOT_LOOP = re.compile(
 def failures(mymesh):
     out = []
     code = strip_comments(mymesh)
-    begin = body_of(code, r"void\s+MyMesh::begin\s*\(\s*bool\s+\w+\s*\)")
+    begin = body_of(code, r"void\s+MyMesh::begin\s*\(\s*(?:bool\s+\w+)?\s*\)")
     if begin is None:
         return ["MyMesh::begin() not found: this check cannot see what it protects"]
     loop = BOOT_LOOP.search(begin)

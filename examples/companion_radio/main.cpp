@@ -580,43 +580,6 @@ void setup() {
   #endif
   #endif
   store.begin();
-  the_mesh.begin(
-    #ifdef DISPLAY_CLASS
-        disp != NULL
-    #else
-        false
-    #endif
-  );
-
-  // #668: interface bring-up for EVERY platform now happens once, below, via
-  // interface_manager. The legacy single-serial_interface block that used to sit
-  // here was NOT removed when 1.17.0's MultiSerialInterface was ported -- only the
-  // ESP32 branch got ported -- so on nRF52 SerialBLEInterface::begin() ran TWICE
-  // (once here, once at the common block) and the second full BLE bring-up
-  // crash-looped the board. USB companions survived it only because a duplicated
-  // ArduinoSerialInterface::begin(Serial) just re-binds a stream.
-#elif defined(RP2040_PLATFORM)
-  LittleFS.begin();
-  store.begin();
-  the_mesh.begin(
-    #ifdef DISPLAY_CLASS
-        disp != NULL
-    #else
-        false
-    #endif
-  );
-
-  //#ifdef WIFI_SSID
-  //  WiFi.begin(WIFI_SSID, WIFI_PWD);
-  //  serial_interface.begin(TCP_PORT);
-  // #elif defined(BLE_PIN_CODE)
-  //   char dev_name[32+16];
-  //   sprintf(dev_name, "%s%s", BLE_NAME_PREFIX, the_mesh.getNodeName());
-  //   serial_interface.begin(dev_name, the_mesh.getBLEPin());
-  // #668: same as the nRF52 branch above -- interface bring-up is owned by
-  // interface_manager below. RP2040's duplication was never fatal because its BLE
-  // path is commented out, so it only ever double-bound an ArduinoSerialInterface,
-  // but it is the same defect and is removed with it.
   the_mesh.begin();
 #elif defined(RP2040_PLATFORM)
   LittleFS.begin();
@@ -628,15 +591,8 @@ void setup() {
   CW_PHASE("ESP32:post SPIFFS.begin");
   store.begin();
   CW_PHASE("ESP32:post store.begin");
-  the_mesh.begin(
-    #ifdef DISPLAY_CLASS
-        disp != NULL
-    #else
-        false
-    #endif
-  );
-  CW_PHASE("ESP32:post the_mesh.begin");
   the_mesh.begin();
+  CW_PHASE("ESP32:post the_mesh.begin");
 #else
   #error "need to define filesystem"
 #endif

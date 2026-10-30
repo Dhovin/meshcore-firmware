@@ -79,14 +79,17 @@ public:
   uint8_t  caplog_enabled = 0;
   uint8_t  caplog_level = 0;
 
-  // #542 B2: status/traffic LED mode (0 = normal, 1 = suppressed/dark).
-  uint8_t  ui_led_mode = 0;
+  // #542 B1: status/traffic LED mode (0 = off / suppressed, 1 = normal / on).
+  uint8_t  ui_led_enabled = 1;
 
   // #542 B1: OLED mode (0 = auto / on with timeout, 1 = always on, 2 = always off / dark).
-  uint8_t  display_mode = 0;
+  uint8_t  ui_display_mode = 0;
 
-  // #1244: font scale for navigation screens (0 = large default, 1 = medium, 2 = small).
-  uint8_t  ui_nav_text_size = DEFAULT_UI_TEXT_SIZE;
+  // #1233: TimeZones.h index; 0 = unset / UTC.
+  uint8_t  ui_tz = 0;
+
+  // #1238, #1362: navigation screens font scale (0 = large default, 1 = medium, 2 = small).
+  uint8_t  ui_text_size = DEFAULT_UI_TEXT_SIZE;
 
   // #1362: font scale for message preview and thread view.
   uint8_t  ui_msg_text_size = DEFAULT_UI_MSG_TEXT_SIZE;
@@ -94,12 +97,17 @@ public:
   // #1245: auto-blank delay in seconds. 0 = compiled-in AUTO_OFF_MILLIS.
   uint16_t ui_screen_secs = DEFAULT_UI_SCREEN_SECS;
 
-  // #1248: index into TimeZones.h table; 0 = unset / UTC.
-  uint8_t  ui_tz_idx = 0;
-
-  // #1250: learned or pinned full battery voltage in millivolts; 0 = unlearned.
+  // #1254: learned or pinned full battery voltage in millivolts; 0 = unlearned.
   uint16_t batt_full_mv = 0;
-  uint8_t  batt_full_pinned = 0;
+  uint8_t  batt_full_user = 0;
+
+  // #1420: per-event tune ids. 0xFF means unset (resolve to compiled default).
+  uint8_t  ui_tone_dm = 0xFF;
+  uint8_t  ui_tone_channel = 0xFF;
+  uint8_t  ui_tone_room = 0xFF;
+  uint8_t  ui_tone_newcontact = 0xFF;
+  uint8_t  ui_tone_ack = 0xFF;
+  uint8_t  ui_tone_sent = 0xFF;
 
   // #509: assignable button actions for single, double, triple, and quadruple press.
   uint8_t  button_actions[4] = { 0, 0, 0, 0 };
@@ -266,15 +274,21 @@ private:
     NodePrefs* _parent;
   protected:
     void structure() override {
-      def("scope", _parent->notify_scope);      // #510: notify_scope (0 ALL, 1 SELF, 2 NONE)
-      def("led", _parent->ui_led_mode);         // #542 B2: status/traffic LED mode
-      def("disp", _parent->display_mode);       // #542 B1: OLED mode
-      def("nav_sz", _parent->ui_nav_text_size); // #1244: font scale for menus/nav
-      def("msg_sz", _parent->ui_msg_text_size); // #1362: font scale for messages
-      def("off_s", _parent->ui_screen_secs);    // #1245: auto-blank timeout (secs)
-      def("tz", _parent->ui_tz_idx);            // #1248: TimeZones.h index
-      def("b_full", _parent->batt_full_mv);     // #1250: learned/pinned 100% point (mV)
-      def("b_pin", _parent->batt_full_pinned);  // #1250: 1 = pinned by user, 0 = learned
+      def("led", _parent->ui_led_enabled);        // #542 B1
+      def("disp", _parent->ui_display_mode);      // #542 B1
+      def("notify", _parent->notify_scope);       // #510
+      def("tz", _parent->ui_tz);                  // #1233
+      def("txt", _parent->ui_text_size);          // #1238, #1362: navigation screens
+      def("mtxt", _parent->ui_msg_text_size);     // #1362: message screens
+      def("scroff", _parent->ui_screen_secs);     // #1245
+      def("bfull", _parent->batt_full_mv);        // #1254
+      def("bfuser", _parent->batt_full_user);     // #1254
+      def("t_dm", _parent->ui_tone_dm);           // #1420
+      def("t_ch", _parent->ui_tone_channel);
+      def("t_room", _parent->ui_tone_room);
+      def("t_new", _parent->ui_tone_newcontact);
+      def("t_ack", _parent->ui_tone_ack);
+      def("t_sent", _parent->ui_tone_sent);
       def("btn", _parent->button_actions, sizeof(_parent->button_actions));
     }
   public:

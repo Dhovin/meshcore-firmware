@@ -1209,6 +1209,8 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
     if (_prefs.notify_scope != NOTIFY_SCOPE_NONE) {
       _ui->notify(UIEventType::contactMessage);
     }
+  }
+#endif
   if (_listener) {
     _listener->onMessageRecv(pkt, from, txt_type, sender_timestamp, text);
     _listener->onQueueSizeChanged(offline_queue_len);
@@ -1509,12 +1511,30 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
 #ifdef OFFBAND_TUNE_TRIGGER
   // A channel message can ask every badge that hears it to sound the un-listed tune.
-  // The RULE is in helpers/ui/BadgeCustomTunes.h: match the hidden text, have the
-  // tune set, buzzer not suppressed. A matching text never enters the inbox, never
-  // renders, never vibrates, never logs: the tone IS the only signal.
-  if (offband::badgeMatchesHiddenTrigger(text)) {
-    offband::badgePlayHiddenTrigger();
-    return;
+  //
+  // The RULE is in helpers/ui/TuneTrigger.h and is host-tested there. What belongs here
+  // is the SCOPE: which channel, and nothing else. Keeping the two apart is why the rule
+  // can be walked by 43 native tests without a radio.
+  //
+  // `text` is passed WHOLE, not split. The wire form is "<name>: <body>" and
+  // messageFiresTriggerOnChannelText() does its own split for a load-bearing reason: the
+  // badge store caps a sender at 15 bytes, the sender's mark is 4 bytes before any
+  // variation selector, and so a long name keeps its mark on the air and loses it in the
+  // store. Handing the rule the stored sender would work for short names and fail
+  // silently for long ones, which nothing on any screen would reveal.
+  if (_ui != NULL) {
+    ChannelDetails trig_ch;
+    if (getChannel(channel_idx, trig_ch) &&
+        offband::channelNameMatches(trig_ch.name, OFFBAND_TUNE_TRIGGER_CHANNEL) &&
+        offband::messageFiresTriggerOnChannelText(text)) {
+      // `accepted`, not `sounded`. The badge's MUTE slide switch is in series with BZ1,
+      // downstream of the pin, so no software can tell whether anything was audible.
+      // Logging this as "sounded" cost a bench session on 2026-10-18 -- it read 1 twice
+      // while the owner heard nothing, and the switch was never in the picture.
+      const bool accepted = _ui->playTriggerTune();
+      mesh_log_line(MLOG_DEBUG, "[trig] ch=%s accepted=%d\n", trig_ch.name,
+                    accepted ? 1 : 0);
+    }
   }
 #endif
 #if OFFBAND_SCREEN_UI
@@ -2041,7 +2061,7 @@ void MyMesh::badgeSendTick() {
 
 MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store)
     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(COMPANION_PACKET_POOL_SIZE), tables),
-      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _ui(ui), _iter(0) {
+      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _listener(NULL), _iter(0) {
   _iter_started = false;
   _cli_rescue = false;
   // #611: clear the packet-hash ring here rather than relying on the_mesh having
@@ -2078,9 +2098,6 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _caplog_off = 0;
   _caplog_resume = false;
   _caplog_last_progress = 0;  // #718: stall clock
-MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store)
-    : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables),
-      _serial(NULL), telemetry(MAX_PACKET_PAYLOAD - 4), _store(&store), _listener(NULL), _iter(0) {
   _iter_started = false;
   _cli_rescue = false;
   cli_command[0] = 0;
@@ -5230,7 +5247,6 @@ void MyMesh::loop() {
     // Strycher/LoRa#325: also accept observer config commands typed on
     // the USB serial console (independent of the companion framing protocol).
     checkObserverSerialCli();
-#endif
 #endif
   }
 #if defined(OFFBAND_OBSERVER) && MAX_NEIGHBOURS
