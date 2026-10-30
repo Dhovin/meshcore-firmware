@@ -206,8 +206,8 @@ public:
   // the on-device GUI and the phone do exactly the same thing. The phone
   // handlers turn each result into the reply code they have always sent.
   offband::gui::CmdResult cmdSendDirect(ContactInfo& to, uint32_t timestamp, uint8_t attempt,
-                                        const char* text, bool cli_data, bool* flood,
-                                        uint32_t* expected_ack, uint32_t* est_timeout);
+                                        const char* text, uint8_t txt_type = 0, bool* flood = nullptr,
+                                        uint32_t* expected_ack = nullptr, uint32_t* est_timeout = nullptr);
   offband::gui::CmdResult cmdSendChannel(uint8_t idx, uint32_t timestamp, const char* text, size_t len);
   offband::gui::CmdResult cmdSendAdvert(bool flood);
   offband::gui::CmdResult cmdSetChannel(uint8_t idx, const char* name, const uint8_t secret[16]);

@@ -1,0 +1,4 @@
+schema_version: 1
+issue: 1905
+impact: none
+reason: Fixed caplog restore logic and aligned CMD_SEND_TXT_MSG block with cmdSendDirect in MyMesh.

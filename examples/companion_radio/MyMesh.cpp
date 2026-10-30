@@ -2252,9 +2252,16 @@ void MyMesh::begin() {
 
   _active_ble_pin = _prefs.ble_pin;
   // #428: restore caplog capture across reboot. Done here -- right after loadPrefs and
-  // as early as the persisted flag is knowable -- so the sink is active for the
-  // following the_mesh.begin() adverts and startup traffic.
-  offband::restoreCaplogFromPrefs(the_mesh.getNodePrefs()->caplog_enabled);
+  // as early as the persisted flag is knowable -- so the sink is live before the mesh /
+  // radio / interface boot diagnostics that follow, and they land in the capture ring.
+  // The ring itself is a static global (always allocated); only the enabled flag needs
+  // restoring. The pre-reboot ring is gone (plain-RAM non-retained); this captures the
+  // FRESH boot log forward, per #428. Level is clamped to a valid MLOG_* band.
+  _prefs.caplog_level = constrain(_prefs.caplog_level, MLOG_BOOT, MLOG_PACKET);
+  if (_prefs.caplog_enabled) {
+    meshLogSetLevel(_prefs.caplog_level);
+    meshLogSetEnabled(true);
+  }
 
   resetContacts();
   _store->loadContacts(this);
@@ -3679,19 +3686,10 @@ void MyMesh::handleCmdFrame(size_t len) {
       char *text = (char *)&cmd_frame[i];
       int tlen = len - i;
       text[tlen] = 0; // ensure null
-      int result;
-      uint32_t expected_ack;
-      if (txt_type == TXT_TYPE_CLI_DATA || txt_type == TXT_TYPE_CLI_COMMAND) {
-        msg_timestamp = getRTCClock()->getCurrentTime();  // use local time for CLI commands
-        result = sendCommandData(*recipient, msg_timestamp, attempt, txt_type, text, est_timeout);
-      } else {
-        bool flood = false;
-        if (cmdSendDirect(*recipient, msg_timestamp, attempt, text, txt_type == TXT_TYPE_SIGNED_PLAIN, expected_ack, est_timeout, flood)) {
-          result = MSG_SEND_SENT_DIRECT;
-        } else {
-          result = MSG_SEND_FAILED;
-        }
-      }
+      bool flood = false;
+      uint32_t expected_ack = 0, est_timeout = 0;
+      if (cmdSendDirect(*recipient, msg_timestamp, attempt, text, txt_type, &flood,
+                        &expected_ack, &est_timeout) != offband::gui::CmdResult::Ok) {
         writeErrFrame(ERR_CODE_TABLE_FULL);
       } else {
         out_frame[0] = RESP_CODE_SENT;
@@ -5301,13 +5299,13 @@ bool MyMesh::advert() {
 using offband::gui::CmdResult;
 
 CmdResult MyMesh::cmdSendDirect(ContactInfo& to, uint32_t timestamp, uint8_t attempt, const char* text,
-                                bool cli_data, bool* flood, uint32_t* expected_ack, uint32_t* est_timeout) {
+                                uint8_t txt_type, bool* flood, uint32_t* expected_ack, uint32_t* est_timeout) {
   uint32_t ack = 0, timeout = 0;
   int result;
-  if (cli_data) {
+  if (txt_type == TXT_TYPE_CLI_DATA || txt_type == TXT_TYPE_CLI_COMMAND) {
     // The node's RTC, not the caller's timestamp, so replay protection isn't tripped.
     timestamp = getRTCClock()->getCurrentTimeUnique();
-    result = sendCommandData(to, timestamp, attempt, text, timeout);
+    result = sendCommandData(to, timestamp, attempt, txt_type, text, timeout);
   } else {
     result = sendMessage(to, timestamp, attempt, text, ack, timeout);
   }
@@ -5315,7 +5313,7 @@ CmdResult MyMesh::cmdSendDirect(ContactInfo& to, uint32_t timestamp, uint8_t att
 #ifdef OFFBAND_GUI
   // #1464: keep the sent DM. An app resend (attempt > 0) is the same message.
   uint32_t stored = 0;
-  if (!cli_data) {
+  if (txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN) {
     const int t = guiThreadFor(to);
     if (t >= 0) {
       const size_t len = strlen(text);
