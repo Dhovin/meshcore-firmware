@@ -1,0 +1,4 @@
+schema_version: 1
+issue: 1900
+impact: none
+reason: Rebased firmware onto MeshCore v1.18.0 and implemented minimal plain HTTP web portal on port 80 with MQTT broker configuration and PSRAM initialization for Heltec V4.
