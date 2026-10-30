@@ -13,32 +13,17 @@
   #include <helpers/gui/GuiReplies.h>
   #include <helpers/gui/GuiViews.h>
 #endif
-#include "AbstractUITask.h"
 #include <helpers/StreamAbandonReport.h>   // #1316: AbandonLimiter, held as a member below
 
 /*------------ Frame Protocol --------------*/
-// FIRMWARE_VER_CODE is a MERGE-ORDERED monotonic contract number, not per-feature:
-// each in-flight branch that changes the device-info caps byte claims the NEXT code
-// AT MERGE, not at branch time. Do not assume a code from an unmerged branch is yours
-// -- check what has actually merged (same split-allocation trap as the cap bits; see
-// the canonical table in OffbandConfigProtocol.h). In-flight claimants after 17:
-// #508 (caps byte 2) MERGED and took 18. Still in flight and NOT yet allocated:
-// #365 WIFI_COMPANION (0x08) and display-config (0x10) -- they take 20 and beyond in
-// merge order, NOT 19, which this branch is claiming. The value below is PROVISIONAL
-// for this branch -- reconcile it against firmware-base at merge.
-//
-// Why a bump at all when byte 2 already exists: precedent is that ADDING A CAP BIT
-// bumps the code even without a frame-layout change -- 17 was "+ caplog cap bit
-// (0x20)", 16 was "FEM LNA cap 0x04 / 0xC3". This change sets caps2 bit 0x01 and adds
-// the 0xC5 command, so it follows the same rule.
 #define FIRMWARE_VER_CODE 22   // #611: + caps2 bit 0x08 PKT_HASH + 0xC6 packet-hash query. Prior 21 (#542): caps2 0x04 INDICATORS + 0xC5 led/display sub-codes + led/display state in device-info. Prior 20 (#509): caps2 0x02 BUTTON_MATRIX. Prior 19 (#510): caps2 0x01 NOTIFY_SCOPE + 0xC5. Prior 18 (#508): second caps byte at offset 84
 
 #ifndef FIRMWARE_BUILD_DATE
-#define FIRMWARE_BUILD_DATE "9 Aug 2026"
+#define FIRMWARE_BUILD_DATE "15 Oct 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v1.17.0"
+#define FIRMWARE_VERSION "v1.18.0"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -140,6 +125,10 @@
 #define REQ_TYPE_KEEP_ALIVE             0x02
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
 
+// Copied from simple_repeater
+#define CTL_TYPE_NODE_DISCOVER_REQ      0x80
+#define CTL_TYPE_NODE_DISCOVER_RESP     0x90
+
 struct AdvertPath {
   uint8_t pubkey_prefix[7];
   uint8_t path_len;
@@ -162,10 +151,30 @@ struct SentPktHash {
 
 class MyMesh : public BaseChatMesh, public DataStoreHost {
 public:
-  MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store, AbstractUITask* ui=NULL);
+  class Listener {
+    public:
+      virtual void onMessageRecv(mesh::Packet *pkt, const ContactInfo &from, uint8_t txt_type, uint32_t sender_timestamp, const char* text) = 0;
+      virtual void onChannelMessageRecv(mesh::Packet *pkt, ChannelDetails& channel_details, const char* text) = 0;
+      virtual void onQueueSizeChanged(int msgcount) = 0;
+      virtual void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) { }
+      virtual void onControlDataRecv(const mesh::Packet* pkt) { }
+      virtual void onChannelDataRecv(mesh::Packet *pkt, const mesh::GroupChannel &channel, uint16_t data_type,
+                                     const uint8_t *data, size_t data_len) { }
+      virtual void onACKRecv(uint32_t ack_crc) { }
+      virtual uint8_t onUnhandledRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
+                                         uint8_t len, uint8_t *reply) { return 0; /* unknown request type */ }
+      virtual bool onUnhandledResponse(const ContactInfo &from, uint32_t tag, const uint8_t* data, uint8_t len) { return false; /* not handled */ }
+      virtual void onTraceRecv(mesh::Packet *pkt, uint32_t tag, uint32_t auth_code, uint8_t flags,
+                               const uint8_t *path_snrs, const uint8_t *path_hashes, uint8_t path_len) { }
+      virtual void onRawDataRecv(mesh::Packet *pkt) { }
+      virtual ~Listener() { }
+  };
 
-  void begin(bool has_display);
+  MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables, DataStore& store);
+
+  void begin();
   void startInterface(BaseSerialInterface &serial);
+  void setListener(Listener* listener) { _listener = listener; }
 
   const char *getNodeName();
   NodePrefs *getNodePrefs();
@@ -175,6 +184,7 @@ public:
   // Returns false when the setting could not be saved (it still holds until reboot).
   bool setCaplogCapture(bool on, uint8_t level);
   uint32_t getBLEPin();
+  void setBLEPin(uint32_t active_pin);
 
   void loop();
   void handleCmdFrame(size_t len);
@@ -356,6 +366,9 @@ protected:
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
   bool getCADEnabled() const override;
+  int getAGCResetInterval() const override {
+    return ((int)_prefs.agc_reset_interval) * 4000;   // milliseconds
+  }
   int calcRxDelay(float score, uint32_t air_time) const override;
   uint32_t getRetransmitDelay(const mesh::Packet *packet) override;
   uint32_t getDirectRetransmitDelay(const mesh::Packet *packet) override;
@@ -404,6 +417,8 @@ protected:
                      const char *text) override;
   void onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                          const char *text) override;
+  void onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
+                         const char *text, char* reply) override;
   void onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const uint8_t *sender_prefix, const char *text) override;
   void onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
@@ -448,6 +463,8 @@ public:
     _prefs.node_lat = sensors.node_lat;
     _prefs.node_lon = sensors.node_lon;
     return _store->savePrefs(_prefs);
+    _store->savePrefs(_prefs);
+    _prefs.clearDirty();
   }
 
 #if ENV_INCLUDE_GPS == 1
@@ -606,6 +623,7 @@ private:
   }
 
   void checkCLIRescueCmd();
+  bool handleCommand(const char* text, uint32_t sender_timestamp, char* reply);
   void checkSerialInterface();
 #ifdef OFFBAND_OBSERVER
   void checkObserverSerialCli();   // Strycher/LoRa#325: USB-serial -> observer CLI
@@ -630,7 +648,7 @@ private:
   uint32_t pending_telemetry, pending_discovery;   // pending _TELEMETRY_REQ
   uint32_t pending_req;   // pending _BINARY_REQ
   BaseSerialInterface *_serial;
-  AbstractUITask* _ui;
+  Listener* _listener;
 
   ContactsIterator _iter;
   uint32_t _iter_filter_since;
@@ -806,6 +824,7 @@ private:
   // in handleCmdFrame). Timed on PROGRESS, not total duration, so a legitimately slow
   // but advancing download is never cut off.
   uint32_t _caplog_last_progress;
+  char reply_buf[166];
   uint8_t app_target_ver;
   uint8_t *sign_data;
   uint32_t sign_data_len;

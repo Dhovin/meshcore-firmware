@@ -32,6 +32,7 @@ public:
   // Offband (#149): format live GPS state as ASCII into out[0..cap). Default empty
   // for managers without GPS; EnvironmentSensorManager overrides it.
   virtual size_t getGpsStatusText(char* out, size_t cap) { if (cap > 0) out[0] = '\0'; return 0; }
+  virtual bool isGPSDetected() const { return false; }
 
   // Helper functions to manage setting by keys (useful in many places ...)
   const char* getSettingByKey(const char* key) {

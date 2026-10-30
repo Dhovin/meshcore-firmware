@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint> // For uint8_t, uint32_t
 #include <helpers/ConfigSerializer.h>
+#include <helpers/CommonRadioPrefs.h>
+#include <helpers/DynamicConfigSerializer.h>
 #include <helpers/GpsPowerMode.h>  // #1555: GpsMode + kGpsModeUnset
 #include <helpers/PathHashDefault.h>   // #1753: the shared default path-hash mode
 #ifdef OFFBAND_GUI
@@ -53,10 +55,55 @@ public:
   uint8_t telemetry_mode_loc = 0;
   uint8_t telemetry_mode_env = 0;
   float rx_delay_base = 0;
+  float tx_delay_factor = 0;
+  float direct_tx_delay_factor = 0;
   uint32_t ble_pin = 0;
   uint8_t  advert_loc_policy = 0;
   uint8_t  buzzer_quiet = 0;
   uint8_t  vibe_quiet = 0;
+
+  // #510: notify_scope. 0 = ALL (default, legacy behaviour: all channels + DMs),
+  // 1 = SELF (my channel mentions + DMs), 2 = NONE (silent / no buzzer or vibration).
+  uint8_t  notify_scope = 0;
+
+  // #368: syslog target persistence. Kept in the companion's NodePrefs alongside
+  // repeater/observer CommonCLI so syslog.host / syslog.port / syslog.level /
+  // syslog.mask / syslog.transport can be configured uniformly across roles.
+  uint8_t  syslog_level = 0;
+  uint8_t  syslog_mask = 0;
+  uint8_t  syslog_transport = 0;
+  char     syslog_host[64];
+  uint16_t syslog_port = 514;
+
+  // #428: caplog (MeshLog capture) persistence.
+  uint8_t  caplog_enabled = 0;
+  uint8_t  caplog_level = 0;
+
+  // #542 B2: status/traffic LED mode (0 = normal, 1 = suppressed/dark).
+  uint8_t  ui_led_mode = 0;
+
+  // #542 B1: OLED mode (0 = auto / on with timeout, 1 = always on, 2 = always off / dark).
+  uint8_t  display_mode = 0;
+
+  // #1244: font scale for navigation screens (0 = large default, 1 = medium, 2 = small).
+  uint8_t  ui_nav_text_size = DEFAULT_UI_TEXT_SIZE;
+
+  // #1362: font scale for message preview and thread view.
+  uint8_t  ui_msg_text_size = DEFAULT_UI_MSG_TEXT_SIZE;
+
+  // #1245: auto-blank delay in seconds. 0 = compiled-in AUTO_OFF_MILLIS.
+  uint16_t ui_screen_secs = DEFAULT_UI_SCREEN_SECS;
+
+  // #1248: index into TimeZones.h table; 0 = unset / UTC.
+  uint8_t  ui_tz_idx = 0;
+
+  // #1250: learned or pinned full battery voltage in millivolts; 0 = unlearned.
+  uint16_t batt_full_mv = 0;
+  uint8_t  batt_full_pinned = 0;
+
+  // #509: assignable button actions for single, double, triple, and quadruple press.
+  uint8_t  button_actions[4] = { 0, 0, 0, 0 };
+
   uint8_t  gps_enabled = 0;      // GPS enabled flag (0=disabled, 1=enabled)
   uint32_t gps_interval = 0;     // GPS read interval in seconds
   // #1555: HOW GPS runs while it is enabled -- On or Power save. **Not whether it is on;
@@ -79,17 +126,33 @@ public:
   uint32_t gps_ps_interval_s = 0;
   uint8_t autoadd_config = 0;    // bitmask for auto-add contacts config
   uint8_t rx_boosted_gain = 0; // SX126x RX boosted gain mode (0=power saving, 1=boosted)
+  uint8_t radio_fem_rxgain = 0; // external LoRa FEM RX gain (LNA)
+  uint8_t radio_fem_txgain = 0; // external LoRa FEM TX gain (low by default)
   uint8_t _client_repeat = 0;  // DEPRECATED -> use repeat.disable_fwd
   // #1753: 2-byte path hashes by default, from the same shared constant the other
   // roles use, so a companion and a repeater cannot end up originating at different
   // sizes. Reasoning and accepted costs are in helpers/PathHashDefault.h.
   uint8_t path_hash_mode = offband::DEFAULT_PATH_HASH_MODE;    // which path mode to use when sending
   uint8_t autoadd_max_hops = 0;  // 0 = no limit, 1 = direct (0 hops), N = up to N-1 hops (max 64)
+  uint8_t cad_enabled = 0;
+  uint8_t interference_threshold = 0;
+  uint8_t agc_reset_interval = 0;  // secs / 4
   char default_scope_name[31];
   uint8_t default_scope_key[16];
+  int8_t tz_offset = 0;
+#ifdef ENABLE_WIFI_INTERFACE
+  #ifndef WIFI_SSID
+    #define WIFI_SSID ""
+  #endif
+  char wifi_ssid[33] = {0};   // if empty, the compile-time WIFI_SSID is used
+  char wifi_pwd[64] = {0};
+  uint8_t wifi_enabled = 1; // enabled by default to allow wifi only builds to work. wifi won't be started if ssid is empty
+  // use ssid from prefs, or fallback to ssid from build flags
+  const char* getWifiSSID() const { return wifi_ssid[0] ? wifi_ssid : WIFI_SSID; }
+#endif
 
 private:
-  class RadioPrefs : public ConfigSerializer {  // COPIED from CommonCLI (for now)
+  class RadioPrefs : public CommonRadioPrefs {
     NodePrefs* _parent;
   protected:
     void structure() override {
@@ -97,24 +160,58 @@ private:
       def("bw", _parent->bw);
       def("sf", _parent->sf);
       def("cr", _parent->cr);
-      //def("cad", _parent->cad_enabled);
-      //def("int_thr", _parent->interference_threshold);
+      def("cad", _parent->cad_enabled);
+      def("int_thr", _parent->interference_threshold);
       def("rxgain", _parent->rx_boosted_gain);
-      // Upstream maps this to rx_boosted_gain (no radio_fem_rxgain member exists
-      // in their companion class) -- the same copy/paste bug as CommonCLI.h,
-      // fixed upstream in PR #3137. Offband carries the real field (#298).
-      def("fem_rxgain", _parent->radio_fem_rxgain);
+      def("fem_rxgain", _parent->radio_fem_rxgain);   // fem_rxgain WAS mapped to wrong JSON property previously
+      def("fem_txgain", _parent->radio_fem_txgain);
       def("tx", _parent->tx_power_dbm);
       def("af", _parent->airtime_factor);
       def("rxdelay", _parent->rx_delay_base);
-      //def("f_txdelay", _parent->tx_delay_factor);   currently hard-coded
-      //def("d_txdelay", _parent->direct_tx_delay_factor);  currently hard-coded
-      //def("agc_int", _parent->agc_reset_interval);
+      def("f_txdelay", _parent->tx_delay_factor);
+      def("d_txdelay", _parent->direct_tx_delay_factor);
+      def("agc_int", _parent->agc_reset_interval);
       def("hash_mode", _parent->path_hash_mode);
       def("multi_ack", _parent->multi_acks);
     }
   public:
     RadioPrefs(NodePrefs* parent) : _parent(parent) { }
+
+    // CommonRadioPrefs interface
+    float getFreq() const override { return _parent->freq; }
+    void setFreq(float f) override { _parent->freq = f; markDirty(); }
+    float getBandwidth() const override { return _parent->bw; }
+    void setBandwidth(float bw) override { _parent->bw = bw; markDirty(); }
+    uint8_t getSpreadFactor() const override { return _parent->sf; }
+    void setSpreadFactor(uint8_t sf) override { _parent->sf = sf; markDirty(); }
+    uint8_t getCodingRate() const override { return _parent->cr; }
+    void setCodingRate(uint8_t cr) override { _parent->cr = cr; markDirty(); }
+    float getAirtimeFactor() const override { return _parent->airtime_factor; }
+    void setAirtimeFactor(float af) override { _parent->airtime_factor = af; markDirty(); }
+    bool isCadEnabled() const override { return _parent->cad_enabled; }
+    void setCadEnabled(bool en) override { _parent->cad_enabled = en; markDirty(); }
+    uint8_t getIntThresh() const override { return _parent->interference_threshold; }
+    void setIntThresh(uint8_t t) override { _parent->interference_threshold = t; markDirty(); }
+    uint8_t getRxGain() const override { return _parent->rx_boosted_gain; }
+    void setRxGain(uint8_t g) override { _parent->rx_boosted_gain = g; markDirty(); }
+    uint8_t getTxPower() const override { return _parent->tx_power_dbm; }
+    void setTxPower(uint8_t dbm) override { _parent->tx_power_dbm = dbm; markDirty(); }
+    float getRxDelay() const override { return _parent->rx_delay_base; }
+    void setRxDelay(float d) override { _parent->rx_delay_base = d; markDirty(); }
+    uint16_t getAgcResetInt() const override { return _parent->agc_reset_interval * 4; }
+    void setAgcResetInt(uint16_t secs) override { _parent->agc_reset_interval = secs / 4; markDirty(); }
+    uint8_t getHashMode() const override { return _parent->path_hash_mode; }
+    void setHashMode(uint8_t m) override { _parent->path_hash_mode = m; markDirty(); }
+    uint8_t getMultiAcks() const override { return _parent->multi_acks; }
+    void setMultiAcks(uint8_t m) override { _parent->multi_acks = m; markDirty(); }
+    float getFloodTxDelay() const override { return _parent->tx_delay_factor; }
+    void setFloodTxDelay(float d) override { _parent->tx_delay_factor = d; markDirty(); }
+    float getDirectTxDelay() const override { return _parent->direct_tx_delay_factor; }
+    void setDirectTxDelay(float d) override { _parent->direct_tx_delay_factor = d; markDirty(); }
+    uint8_t getFEMRxGain() const override { return _parent->radio_fem_rxgain; }
+    void setFEMRxGain(uint8_t g) override { _parent->radio_fem_rxgain = g; markDirty(); }
+    uint8_t getFEMTxGain() const override { return _parent->radio_fem_txgain; }
+    void setFEMTxGain(uint8_t g) override { _parent->radio_fem_txgain = g; markDirty(); }
   };
   RadioPrefs radio;
 
@@ -125,10 +222,8 @@ private:
       def("en", _parent->gps_enabled); // boolean
       def("int", _parent->gps_interval);   // interval in seconds
       def("adv_loc", _parent->advert_loc_policy);
-      // #1555: additive keys. A file without them leaves the members at their defaults,
-      // which both mean "nothing chosen" -- so an upgrade changes nothing.
-      def("mode", _parent->gps_mode);           // offband::GpsMode, 0xFF = unset
-      def("ps_int", _parent->gps_ps_interval_s); // Power-save sleep, seconds; 0 = default
+      def("mode", _parent->gps_mode);            // #1555: GpsMode
+      def("ps_int", _parent->gps_ps_interval_s); // #1555: Power save sleep interval (s)
     }
   public:
     GPSPrefs(NodePrefs* parent) : _parent(parent) { }
@@ -141,10 +236,6 @@ private:
   protected:
     void structure() override {
       def("disable", disable_fwd);
-      //def("f_max", flood_max);
-      //def("f_max_uns", flood_max_unscoped);
-      //def("f_max_adv", flood_max_advert);
-      //def("loop", loop_detect);
     }
   };
   RepeatPrefs repeat;
@@ -164,92 +255,26 @@ private:
       def("tel_base", _parent->telemetry_mode_base);
       def("tel_loc", _parent->telemetry_mode_loc);
       def("tel_env", _parent->telemetry_mode_env);
+      def("tz_offset", _parent->tz_offset);
     }
   public:
     CompanionPrefs(NodePrefs* parent) : _parent(parent) { }
   };
   CompanionPrefs companion;
 
-public:
-  // ---- Offband-only members ----------------------------------------------
-  // MUST be public: DataStore::loadPrefsInt() reads them directly, same as the
-  // upstream members above. They sit after upstream's private: section, so the
-  // access specifier has to be re-opened here.
-  uint8_t radio_fem_rxgain = 1;   // #298: 1 = LNA on, 0 = bypass
-  uint8_t caplog_enabled = 0;     // #428
-  uint8_t caplog_level = 0;       // #428
-  uint8_t notify_scope = 0;       // #510
-  uint8_t button_actions[4] = {0, 0, 0, 0};  // #509
-  uint8_t ui_led_enabled = 1;     // #542 B1
-  uint8_t ui_display_mode = 0;    // #542 B1
-  uint8_t ui_tz = 0;              // #1233: a TimeZones.h index; 0 = not set (show ages)
-  // #1238: 0 large, 1 medium (Org_01), 2 small. #1244: the owner asked for large.
-  // Named, because BadgeLayout.h has to agree and this header is shared by every
-  // board: BadgeScreens.cpp static_asserts the two against each other.
-  // #1362: this one now governs NAVIGATION screens only.
-  uint8_t ui_text_size = DEFAULT_UI_TEXT_SIZE;
-  // #1362: the same three steps, for message screens (Inbox and Thread). Separate
-  // because the two surfaces want different answers -- large reads well as a menu row
-  // and badly as a message, where characters per line is what matters. A badge that
-  // already has prefs keeps its `txt` as the navigation size and takes the compiled
-  // default for this one, because the keyed /prefs.json simply has no `mtxt` in it yet.
-  uint8_t ui_msg_text_size = DEFAULT_UI_MSG_TEXT_SIZE;
-  // #1245: seconds before the display blanks; 0 = the board's compiled AUTO_OFF_MILLIS.
-  uint16_t ui_screen_secs = DEFAULT_UI_SCREEN_SECS;
-  // #1254: where 100% is on THIS cell, in millivolts. 0 = nothing known, so the board's
-  // compiled BATT_MAX_MILLIVOLTS stands and the bar behaves exactly as it did before.
-  // Set by auto-learn after a full charge, or pinned from Settings; `batt_full_user`
-  // marks the second case, which auto-learn then leaves alone.
-  uint16_t batt_full_mv = 0;
-  uint8_t batt_full_user = 0;
-  // #1420: the tune chosen for each sound event, as a tune-table id.
-  //
-  // 0xFF is "nothing chosen yet", deliberately NOT 0 -- 0 is the id of Silent, which is
-  // a real choice someone can make. A board resolves 0xFF to its own compiled default
-  // (offband::resolveTune), so an un-configured badge follows the firmware and a
-  // deliberately-silenced event stays silent.
-  //
-  // Six separate keys rather than one byte array, and that is deliberate. A blob is
-  // read with `memset(value, 0, len)` then `fromHex` (ConfigSerializer.cpp:155-158), so
-  // a badge whose stored blob is shorter than the array -- which is what happens the
-  // day a seventh event is added -- gets 0 for the new one. 0 is Silent. The new event
-  // would arrive permanently muted on every existing badge, and nothing would say so.
-  // A missing KEY, by contrast, simply leaves the member at its compiled default, which
-  // is the whole reason /prefs.json being keyed is safe to extend.
-  uint8_t ui_tone_dm = 0xFF;
-  uint8_t ui_tone_channel = 0xFF;
-  uint8_t ui_tone_room = 0xFF;
-  uint8_t ui_tone_newcontact = 0xFF;
-  uint8_t ui_tone_ack = 0xFF;
-  uint8_t ui_tone_sent = 0xFF;
-
-private:
-  // ---- Offband-only prefs -------------------------------------------------
-  // No upstream counterpart -- carried across every base update, and they must
-  // appear in structure() below or they will not survive the /prefs.json
-  // migration. Groups mirror upstream's nesting convention (#197).
   class UIPrefs : public ConfigSerializer {
     NodePrefs* _parent;
   protected:
     void structure() override {
-      def("led", _parent->ui_led_enabled);        // #542 B1
-      def("disp", _parent->ui_display_mode);      // #542 B1
-      def("notify", _parent->notify_scope);       // #510
-      def("tz", _parent->ui_tz);                  // #1233
-      def("txt", _parent->ui_text_size);          // #1238, #1362: navigation screens
-      def("mtxt", _parent->ui_msg_text_size);     // #1362: message screens
-      def("scroff", _parent->ui_screen_secs);     // #1245
-      def("bfull", _parent->batt_full_mv);        // #1254
-      def("bfuser", _parent->batt_full_user);     // #1254
-      // #1420: per-event tune ids. 0xFF means unset; see the members for why these are
-      // six keys and not one blob.
-      def("t_dm", _parent->ui_tone_dm);
-      def("t_ch", _parent->ui_tone_channel);
-      def("t_room", _parent->ui_tone_room);
-      def("t_new", _parent->ui_tone_newcontact);
-      def("t_ack", _parent->ui_tone_ack);
-      def("t_sent", _parent->ui_tone_sent);
-      // #509 button-action matrix: 4 bytes, one per OFFBAND_UI_SEQ_*.
+      def("scope", _parent->notify_scope);      // #510: notify_scope (0 ALL, 1 SELF, 2 NONE)
+      def("led", _parent->ui_led_mode);         // #542 B2: status/traffic LED mode
+      def("disp", _parent->display_mode);       // #542 B1: OLED mode
+      def("nav_sz", _parent->ui_nav_text_size); // #1244: font scale for menus/nav
+      def("msg_sz", _parent->ui_msg_text_size); // #1362: font scale for messages
+      def("off_s", _parent->ui_screen_secs);    // #1245: auto-blank timeout (secs)
+      def("tz", _parent->ui_tz_idx);            // #1248: TimeZones.h index
+      def("b_full", _parent->batt_full_mv);     // #1250: learned/pinned 100% point (mV)
+      def("b_pin", _parent->batt_full_pinned);  // #1250: 1 = pinned by user, 0 = learned
       def("btn", _parent->button_actions, sizeof(_parent->button_actions));
     }
   public:
@@ -269,11 +294,26 @@ private:
   };
   LogPrefs log;
 
+  DynamicConfigSerializer custom;
+
+#ifdef ENABLE_WIFI_INTERFACE
+  class WiFiPrefs : public ConfigSerializer {
+    NodePrefs* _parent;
+  protected:
+    void structure() override {
+      def("ssid", _parent->wifi_ssid, sizeof(_parent->wifi_ssid));
+      def("pwd", _parent->wifi_pwd, sizeof(_parent->wifi_pwd));
+      def("enabled", _parent->wifi_enabled);
+    }
+  public:
+    WiFiPrefs(NodePrefs* parent) : _parent(parent) { }
+  };
+  WiFiPrefs wifi;
+#endif
+
 protected:
   void structure() override {
     def("name", node_name, sizeof(node_name));
-    //def("adv_int", advert_interval);
-    //def("f_adv_int", flood_advert_interval);
     def("lat", node_lat);
     def("lon", node_lon);
     def("radio", radio);
@@ -285,16 +325,45 @@ protected:
 #ifdef OFFBAND_GUI
     def("gui", gui);    // Offband #1457: the on-device GUI's settings
 #endif
+    def("custom", custom);
+#ifdef ENABLE_WIFI_INTERFACE
+    def("wifi", wifi);
+#endif
   }
 public:
-  NodePrefs() : radio(this), gps(this), companion(this), ui(this), log(this) {
+  NodePrefs() : radio(this), gps(this), companion(this), ui(this), log(this), custom(&radio)
+#ifdef ENABLE_WIFI_INTERFACE
+    , wifi(this)
+#endif
+  {
     node_name[0] = 0;
     default_scope_name[0] = 0;
     memset(default_scope_key, 0, sizeof(default_scope_key));
+    syslog_host[0] = 0;
   }
   // new accessor methods
   bool isRepeatEn() const { return repeat.disable_fwd == 0; }
   void setRepeatEn(bool en) { repeat.disable_fwd = en ? 0 : 1; }
+
+  CommonRadioPrefs* getRadioPrefs() { return &radio; }
+  KeyValueStore* getCustom() { return &custom; }
+
+  bool isDirty() const override {
+    return ConfigSerializer::isDirty() || radio.isDirty() || custom.isDirty()
+#ifdef ENABLE_WIFI_INTERFACE
+      || wifi.isDirty()
+#endif
+    ;
+  }
+  void clearDirty() override {
+    ConfigSerializer::clearDirty();
+    radio.clearDirty();
+    custom.clearDirty();
+#ifdef ENABLE_WIFI_INTERFACE
+    wifi.clearDirty();
+#endif
+  }
+
 #ifdef OFFBAND_GUI
   // #1457: the on-device GUI's settings. Unlike the groups above it holds its
   // own fields, so it is public.

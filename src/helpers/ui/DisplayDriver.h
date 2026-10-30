@@ -23,6 +23,7 @@ public:
 
   virtual bool isOn() = 0;
   virtual bool isEink() { return false; } // default to non-eink, override in eink drivers
+  virtual void forceFullRefresh() {} // next refresh will be full for eink
   virtual void turnOn() = 0;
   virtual void turnOff() = 0;
   // #148: runtime rotation in DEGREES (0/180 supported; other values ignored).
