@@ -19,7 +19,7 @@ jobs:
     steps:
 
       - name: Clone Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
@@ -47,10 +47,15 @@ jobs:
     steps:
 
       - name: Clone Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
+
+      - name: Generate dummy secrets stub (public build; configured at runtime)
+        run: |
+          printf '[node_secrets]\nadmin_password = ci-dummy\n[wifi_secrets]\nssid = ci-dummy\npassword = ci-dummy\n[mqtt_secrets]\nhost = mqtt.example.com\nport = 1883\nuser = ci-dummy\npassword = ci-dummy\n[ota_secrets]\ntrigger_secret = ci-dummy\n[cmdrelay]\nurl = http://cmdrelay.example.com/cmd\n' > "$RUNNER_TEMP/ci-secrets.ini"
+          echo "PIO_SECRETS_FILE=$RUNNER_TEMP/ci-secrets.ini" >> "$GITHUB_ENV"
 
       - name: Build Firmware
         env:
@@ -58,33 +63,41 @@ jobs:
         run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
 
       - name: Upload Workflow Artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v6
         with:
           name: "${{ matrix.target }}"
-          path: out
+          path: out/*
 
   create-release:
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') # only create release for tagged builds
+    permissions:
+      contents: write
     steps:
 
       - name: Clone Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       - name: Setup Build Environment
         uses: ./.github/actions/setup-build-environment
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v7
         with:
-          merge-multiple: true
-          path: out
+          path: dist
+
+      - name: Collect firmware files
+        run: |
+          mkdir -p out
+          find dist -type f -exec cp {} out/ \;
+          echo "Collected $(find out -type f | wc -l) firmware file(s)."
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           name: "${{ inputs.release_title_prefix }} ${{ env.GIT_TAG_VERSION }}"
-          body: ""
-          draft: true
+          tag_name: "${{ env.GIT_TAG_VERSION }}"
+          target_commitish: ${{ github.sha }}
+          draft: false
+          generate_release_notes: true
           files: out/*
