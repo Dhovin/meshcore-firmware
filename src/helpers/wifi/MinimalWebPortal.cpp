@@ -18,6 +18,8 @@
 #if defined(OFFBAND_OBSERVER) || defined(WITH_MQTT_UPLINK)
   #include "helpers/wifi_observer/ConfigSchema.h"
   #include "helpers/wifi_observer/ObserverCli.h"
+  #include "helpers/wifi_observer/WifiObserver.h"
+  #include "helpers/wifi_observer/MqttBrokerPool.h"
   #define HAS_OBSERVER_CONFIG 1
 #else
   #define HAS_OBSERVER_CONFIG 0
@@ -58,6 +60,33 @@ static String formatUptime() {
   }
   return String(buf);
 }
+
+#if HAS_OBSERVER_CONFIG
+static String formatBrokerState(BrokerState state) {
+  switch (state) {
+    case BrokerState::Up:          return "<span class='badge' style='background:#238636;'>Connected (Up)</span>";
+    case BrokerState::Connecting:  return "<span class='badge' style='background:#d29922;color:#000;'>Connecting...</span>";
+    case BrokerState::Backoff:     return "<span class='badge' style='background:#da3633;'>Reconnecting (Backoff)</span>";
+    case BrokerState::HeldNoClock: return "<span class='badge' style='background:#d29922;color:#000;'>Waiting for Clock Sync</span>";
+    case BrokerState::HeldNoHeap:  return "<span class='badge' style='background:#d29922;color:#000;'>Waiting for Free Heap</span>";
+    case BrokerState::HeldBudget:  return "<span class='badge' style='background:#1f6feb;'>Waiting for TLS Rotation</span>";
+    case BrokerState::Failed:      return "<span class='badge' style='background:#da3633;'>Failed (Gave Up)</span>";
+    case BrokerState::Down:
+    default:                       return "<span class='badge' style='background:#30363d;'>Disabled / Down</span>";
+  }
+}
+
+static String formatBrokerError(BrokerErrorClass err) {
+  switch (err) {
+    case BrokerErrorClass::None:  return "<span style='color:#3fb950;'>None</span>";
+    case BrokerErrorClass::Tcp:   return "<span style='color:#f85149;font-weight:600;'>TCP Timeout / Connection Refused</span>";
+    case BrokerErrorClass::Auth:  return "<span style='color:#f85149;font-weight:600;'>Authentication Failed (Bad Credentials)</span>";
+    case BrokerErrorClass::Tls:   return "<span style='color:#f85149;font-weight:600;'>TLS Handshake / Certificate Error</span>";
+    case BrokerErrorClass::Other: return "<span style='color:#f85149;font-weight:600;'>Unclassified Error</span>";
+    default:                      return "Unknown";
+  }
+}
+#endif
 
 static const char kPageHeader[] PROGMEM = 
   "<!DOCTYPE html><html><head><meta charset='utf-8'>"
@@ -130,6 +159,37 @@ static void registerRoutes(AsyncWebServer* server) {
       }
     }
     html += "</table></div>";
+
+#if HAS_OBSERVER_CONFIG
+    // MQTT Uplink & Observer Card
+    html += "<div class='card'>";
+    html += "<h2>MQTT Uplink & Observer</h2><table>";
+    const MqttBroker& b0 = wifiObserverPool().broker(0);
+    const BrokerRuntimeState& rt0 = b0.runtime();
+    const BrokerConfig& cfg0 = b0.config();
+
+    html += "<tr><td>Connection State</td><td>" + formatBrokerState(rt0.state) + "</td></tr>";
+    if (cfg0.url[0]) {
+      html += "<tr><td>Broker Server</td><td><strong>" + String(cfg0.url) + ":" + String(cfg0.port) + 
+              "</strong> (" + String(cfg0.transport == BrokerTransport::Tls ? "TLS" : "Plain TCP") + ")</td></tr>";
+    } else {
+      html += "<tr><td>Broker Server</td><td><span style='color:#8b949e;'>Not configured</span></td></tr>";
+    }
+    html += "<tr><td>Last Error</td><td>" + formatBrokerError(rt0.last_error_class) + "</td></tr>";
+    if (rt0.last_publish_ms > 0) {
+      uint32_t sec = (millis() - rt0.last_publish_ms) / 1000;
+      html += "<tr><td>Last Packet Uplink</td><td>" + String(sec) + "s ago</td></tr>";
+    } else {
+      html += "<tr><td>Last Packet Uplink</td><td><span style='color:#8b949e;'>Never</span></td></tr>";
+    }
+    if (rt0.last_error_ms > 0 && rt0.last_error_class != BrokerErrorClass::None) {
+      uint32_t sec = (millis() - rt0.last_error_ms) / 1000;
+      html += "<tr><td>Last Error Time</td><td>" + String(sec) + "s ago</td></tr>";
+    }
+    html += "<tr><td>Active Brokers</td><td>" + String(wifiObserverPool().upCount()) + " of " + 
+            String(wifiObserverPool().enabledCount()) + " online</td></tr>";
+    html += "</table></div>";
+#endif
 
     // Memory & PSRAM Card
     html += "<div class='card'>";
@@ -208,6 +268,27 @@ static void registerRoutes(AsyncWebServer* server) {
       enabled = p.getBool("en", enabled);
       p.end();
     }
+#endif
+
+#if HAS_OBSERVER_CONFIG
+    // Live Broker Status Banner
+    const MqttBroker& b0 = wifiObserverPool().broker(0);
+    const BrokerRuntimeState& rt0 = b0.runtime();
+    const BrokerConfig& cur_cfg0 = b0.config();
+
+    html += "<div class='card' style='background:#161b22;border:1px solid #30363d;'>";
+    html += "<h2>Live Connection Status</h2><table>";
+    html += "<tr><td>Status</td><td>" + formatBrokerState(rt0.state) + "</td></tr>";
+    html += "<tr><td>Active Broker</td><td>" + (cur_cfg0.url[0] ? (String(cur_cfg0.url) + ":" + String(cur_cfg0.port)) : String("<span style='color:#8b949e;'>(none configured)</span>")) + "</td></tr>";
+    html += "<tr><td>Last Error</td><td>" + formatBrokerError(rt0.last_error_class) + "</td></tr>";
+    html += "<tr><td>Connection Attempts</td><td>" + String(rt0.retry_count) + "</td></tr>";
+    if (rt0.last_publish_ms > 0) {
+      html += "<tr><td>Last Uplink</td><td>" + String((millis() - rt0.last_publish_ms) / 1000) + "s ago</td></tr>";
+    }
+    if (rt0.last_error_ms > 0 && rt0.last_error_class != BrokerErrorClass::None) {
+      html += "<tr><td>Last Error Occurred</td><td>" + String((millis() - rt0.last_error_ms) / 1000) + "s ago</td></tr>";
+    }
+    html += "</table></div>";
 #endif
 
     html += "<div class='card'>";
