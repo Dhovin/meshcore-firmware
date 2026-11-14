@@ -1,0 +1,290 @@
+// src/helpers/wifi_observer/MqttBroker.h
+//
+// Plan 2 v2 Task 7: per-slot concrete broker. Wraps esp_mqtt_client.
+// Owns one MqttAuth strategy. Transport (TCP/TLS/WSS) is implicit from
+// the URI scheme in cfg.url. State machine: Down/Connecting/Up/Backoff.
+
+#pragma once
+#include "ConfigSchema.h"
+#include "MqttAuth.h"
+#include "BrokerHealth.h"   // #739: connection-health / penalty tracker
+#include "FailEscalateWindow.h"   // #838/#906: per-attempt escalation dedupe
+#include "BudgetHoldClock.h"      // #720: reconnect-proof TLS-budget hold clock
+#include "BrokerEventLog.h"
+#include "MqttPayload.h"
+
+#ifdef ARDUINO
+  #include <Identity.h>
+#endif
+#if defined(ARDUINO) && defined(ESP_PLATFORM)
+  #include <mqtt_client.h>
+  #include "freertos/FreeRTOS.h"
+  #include "freertos/semphr.h"
+#endif
+
+namespace offband {
+
+enum class BrokerState : uint8_t {
+    Down        = 0,  // disabled OR not yet attempted
+    Connecting  = 1,  // tcp connect / TLS handshake in progress
+    Up          = 2,  // healthy
+    Backoff     = 3,  // failed; waiting for backoff window
+    HeldNoClock = 4,  // #87: wss/TLS deferred pending a sane wall clock (NTP/GPS).
+                      // NOT a failure -- no retry burned; released automatically on
+                      // the next drive tick once wallClockSane() becomes true.
+    HeldNoHeap  = 5,  // #171: wss/TLS bring-up deferred because FREE HEAP is below
+                      // OFFBAND_TLS_HEAP_FLOOR_BYTES. Real resource pressure --
+                      // rare. NOT a failure: no retry burned; released on a later
+                      // drive tick once heap recovers (mirrors HeldNoClock).
+    HeldBudget  = 6,  // #715: wss/TLS bring-up deferred because the pool already
+                      // holds OFFBAND_MAX_LIVE_TLS live TLS contexts -- this broker
+                      // is simply WAITING ITS TURN in normal rotation. Heap is fine.
+                      //
+                      // Split out of HeldNoHeap, which covered both and was named
+                      // after the rarer one. With any multi-broker setup this is the
+                      // overwhelmingly common case, and reporting it as a memory
+                      // problem caused repeated real-world misdiagnosis -- including
+                      // the field report that sent us heap-trimming for a scheduling
+                      // defect. Do NOT re-merge these.
+    Failed      = 7,  // #739: given up on after OFFBAND_BROKER_TERMINAL_PENALTY
+                      // escalations. A distinct TERMINAL state -- the pool drops it
+                      // from the rotation candidate set and logs loudly, so a
+                      // persistently-unreachable configured broker stops consuming a
+                      // rotation turn every backoff cycle. NOT an operator disable
+                      // (that stays Down); the operator must re-enable/reconfigure
+                      // to clear it. Distinct so the client can render it later.
+};
+
+enum class BrokerErrorClass : uint8_t {
+    None  = 0,
+    Tcp   = 1,  // connection refused / timeout
+    Auth  = 2,  // bad credentials / token rejected
+    Tls   = 3,  // TLS handshake / cert verify
+    Other = 4,  // unclassified
+};
+
+struct BrokerRuntimeState {
+    BrokerState      state             = BrokerState::Down;
+    uint32_t         last_publish_ms   = 0;
+    uint32_t         went_up_ms        = 0;  // #175: set when state -> Up; picks the oldest live TLS slot to rotate out
+    uint32_t         last_attempt_ms   = 0;
+    uint32_t         last_error_ms     = 0;
+    uint32_t         retry_count       = 0;
+    BrokerErrorClass last_error_class  = BrokerErrorClass::None;
+};
+
+class MqttBroker {
+public:
+    MqttBroker() = default;
+    ~MqttBroker();
+
+    // Disable copy + move (owns raw pointers).
+    MqttBroker(const MqttBroker&) = delete;
+    MqttBroker& operator=(const MqttBroker&) = delete;
+
+    // Bind slot to config. Allocates esp_mqtt_client + MqttAuth.
+    // Does NOT start the connection; pool decides via tryConnect().
+    // Returns false if cfg is invalid (empty URL, unknown auth, etc.).
+    //
+    // #534: may_alloc_client is the pool's ALLOCATION admission for TLS/wss
+    // slots -- REQUIRED (no default, mirroring tryConnect's tls_budget_ok #171)
+    // so no caller can silently bypass it. false means the pool already holds
+    // OFFBAND_MAX_LIVE_TLS TLS clients, so this slot stores its config and stays
+    // CONFIGURED BUT CLIENT-LESS -- the same state releaseClient() leaves a
+    // rotated-out broker in (#175). Previously every enabled slot allocated a
+    // client at configure time, so brokers parked at HeldNoHeap still held a
+    // ~18KB client they could not use; on HV3 that pushed free heap below
+    // OFFBAND_TLS_HEAP_FLOOR_BYTES and deadlocked the pool -- admission fired
+    // only AFTER the cost was paid. The pool promotes a client-less broker via
+    // the existing reconcileSlot() -> begin(..., true) path once budget frees.
+    // Ignored for tcp brokers (they hold no mbedTLS context) and for disabled
+    // slots (they never allocate).
+#ifdef ARDUINO
+    bool begin(uint8_t slot, const BrokerConfig& cfg,
+               const mesh::LocalIdentity& identity,
+               bool may_alloc_client);
+#else
+    bool begin(uint8_t slot, const BrokerConfig& cfg);  // host stub (no identity needed)
+#endif
+
+    // Tear down: stop client, destroy client, free auth. Idempotent.
+    // #98: ALSO deconfigures the slot (slot_ = 0xFF, cfg_ cleared) so a cleared
+    // slot drops out of `mqtt status` immediately. That makes shutdown() the
+    // wrong verb for a TEMPORARY demotion -- see releaseClient().
+    void shutdown();
+
+    // #175: release the live connection WITHOUT deconfiguring the slot.
+    // Destroys the esp_mqtt client + auth (reclaiming the ~60KB mbedTLS context,
+    // same as shutdown -- verified ~56KB on hardware) but RETAINS slot_ and cfg_,
+    // so isConfigured() stays true. This is what TLS rotation needs: shutdown()'s
+    // #98 deconfigure makes the victim invisible to every pool loop (all of which
+    // are gated on isConfigured()), stranding it permanently -- one-way eviction
+    // instead of round-robin. With the slot still configured, the pool's normal
+    // cooldown -> budget -> reconcileSlot -> tryConnect path can promote it back.
+    // keep_failed (#848): when true AND the broker is terminally Failed, reap the
+    // client but PRESERVE the Failed state instead of resetting rt_ to Down. Only
+    // the pool's Failed-reaper passes true; rotation (default false) still resets.
+    void releaseClient(bool keep_failed = false);
+
+    // Create the per-broker client mutex. Call ONCE from the pool on
+    // loopTask, before the lifecycle worker task starts (#53),
+    // so worker create/destroy and loopTask publish/connect serialize on the
+    // same handle. Idempotent; no-op on host builds.
+    void initLock();
+
+    // Initiate connection if not already up/connecting. Honors backoff.
+    // Returns true if a connect attempt is in progress after this call,
+    // false if disabled or backoff window unexpired.
+    // tls_budget_ok: pool-supplied, REQUIRED (no default -- so no caller can
+    // silently bypass the concurrency guard #171). false means OFFBAND_MAX_LIVE_TLS
+    // TLS contexts are already live, so a wss/TLS bring-up self-defers to
+    // HeldNoHeap. Pass true for tcp brokers (the guard ignores them).
+    bool tryConnect(uint32_t now_ms, bool tls_budget_ok);
+
+    // Drive auth refresh + any housekeeping. Called every pool tick.
+    void loop(uint32_t now_ms);
+
+    // Publish raw bytes to a fully-formatted topic. Returns false if
+    // state != Up or enqueue fails. qos 0 frees the queued copy once it is
+    // sent instead of holding it until the broker acknowledges (#1399).
+    bool publish(const char* topic, const uint8_t* payload, size_t len,
+                 bool retain, int qos = 1);
+
+    // Build a payload context for fan-out callers.
+    void fillPayloadCtx(MqttPayloadCtx& ctx,
+                        const char* global_iata,
+                        const char* device_id,
+                        const char* node_name,
+                        const char* client_version,
+                        const char* firmware_version,
+                        const char* model) const;
+
+    uint8_t                    slot()    const { return slot_; }
+    const BrokerConfig&        config()  const { return cfg_; }
+    const BrokerRuntimeState&  runtime() const { return rt_; }
+    // #720: how long this broker has continuously held the TLS budget slot,
+    // reconnect-proof (unlike runtime().went_up_ms). The rotation scheduler ages
+    // an eviction victim by THIS, not went_up_ms, so a flapping broker still
+    // rotates out instead of holding the slot forever.
+    uint32_t budgetHeldMs(uint32_t now_ms) const { return budget_hold_.heldMs(now_ms); }
+    // #739: read-only health for status/rotation; noteCleanDwell() is called by
+    // the pool when this broker is rotated out after holding a FULL dwell Up
+    // with no error -- the only event that earns rehabilitation.
+    const BrokerHealth&        health() const { return health_; }
+    void                       noteCleanDwell();
+
+    // #823: clear a TERMINAL Failed state. Failed is otherwise terminal -- the
+    // pool's reconcileSlot() refuses to revive it via begin(), so the ONLY escape
+    // is an explicit operator reconfigure (mqtt enable/set/clear -> reloadSlot),
+    // which calls this before reconciling. Resets the penalty so the reconfigured
+    // broker gets a fresh start instead of re-failing on its first hiccup. No-op
+    // for a broker that is not terminally Failed, so tweaking a healthy/backoff
+    // broker's config preserves its accumulated penalty.
+    void clearTerminalFailure();
+
+    // #175: true if the esp_mqtt client handle currently exists. shutdown()
+    // destroys it (client_ = nullptr) to free the ~60KB TLS context without
+    // leaking (#327); tryConnect can only START an existing client, never create
+    // one, so the pool must recreate (reconcileSlot -> begin) a rotated-out
+    // broker before it can be brought back up. Host build: always true (no real
+    // client, nothing to recreate).
+    bool hasClient() const;
+    bool                       isConfigured() const { return slot_ != 0xFF; }
+
+private:
+#if defined(ARDUINO) && defined(ESP_PLATFORM)
+    // #532: fill the transport-level fields of an esp_mqtt config -- uri,
+    // keepalive, and CA cert. The config is rebuilt in THREE places (begin() and
+    // the two JWT-refresh paths in tryConnect()/loop()), and the refresh paths
+    // used to set only uri+cert. esp_mqtt_set_config() would then leave keepalive
+    // at esp-mqtt's default 120, so a JWT broker behind a max_keepalive cap
+    // silently reverted after a token refresh and drew the misleading CONNACK
+    // 0x02 diagnosed in #506. Centralizing it makes every build site identical.
+    // Auth is applied by the caller AFTER this (auth_->apply()).
+    void populateBaseConfig(esp_mqtt_client_config_t& mqcfg) const;
+    void noteFailure();   // #739: escalate penalty, set Backoff or Failed
+#endif
+
+    uint8_t              slot_  = 0xFF;
+    BrokerConfig         cfg_;
+    BrokerRuntimeState   rt_;
+    BrokerHealth         health_;   // #739: sticky failure penalty + rehab
+    MqttAuth*            auth_  = nullptr;  // owned
+
+    // What has already been recorded to the capture ring, so conditions the
+    // worker re-drives every pass are recorded once when they start and once when
+    // they end. Outside rt_, which begin() and releaseClient() reset mid-condition.
+    HoldTracker          hold_;
+    RepeatedFailure      setup_fail_;          // begin() could not set the slot up
+    RepeatedFailure      refresh_fail_;        // mid-session credential refresh
+    bool                 no_client_reported_ = false;
+
+#if defined(ARDUINO) && defined(ESP_PLATFORM)
+    esp_mqtt_client_handle_t client_ = nullptr;
+    // Serializes ALL client_ ops (publish/start/stop/destroy) so the lifecycle
+    // worker's blocking stop/destroy never races a loopTask publish/connect on
+    // the same handle (#53). Recursive: begin() -> shutdown().
+    SemaphoreHandle_t        client_lock_ = nullptr;
+    // LoRa#327: tracks whether esp_mqtt_client_start() has been called since the
+    // last stop/destroy, so tryConnect() can pair a stop() before each re-start.
+    // esp-mqtt expects start() once; re-calling it on an already-started client
+    // (after a dropped/failed connection) leaks transport + mbedTLS allocations.
+    bool started_ = false;
+
+    // #838/#906: collapses the up-to-three esp-mqtt events of one failed attempt
+    // into a single penalty escalation, while separate attempts each escalate.
+    // Host-tested in test/test_fail_escalate_window. reset() on a clean connect.
+    FailEscalateWindow fail_window_;
+
+    // What the next disconnect record reports, since esp-mqtt's disconnect event
+    // carries no reason: whether this attempt's session came up, and the class of
+    // the error event raised for the same failure. rt_.state cannot answer the
+    // first -- an error escalates Up to Backoff before its disconnect arrives.
+    // Reset in onBeforeConnect(), which starts every attempt; both are read and
+    // written only by the handlers, which run in order on the esp-mqtt task.
+    bool             session_up_              = false;
+    BrokerErrorClass error_before_disconnect_ = BrokerErrorClass::None;
+
+    // tryConnect() already recorded the attempt its start() begins, so the
+    // BEFORE_CONNECT that follows must not record it again. Any other
+    // BEFORE_CONNECT is esp-mqtt's own auto-reconnect. Set on mqtt_worker before
+    // start() creates the esp-mqtt task; cleared by that task.
+    //
+    // volatile because those are two tasks: the write happens before the task
+    // that reads it exists, so the ordering holds, but nothing in the types
+    // says so and a compiler is free to keep the read in a register.
+    volatile bool    pool_start_recorded_     = false;
+
+    // #720: reconnect-proof clock for TLS-budget hold duration. Stamped on the
+    // first Up of an occupancy, cleared on releaseClient(); a reconnect does NOT
+    // reset it. Separate from rt_ (which a reconnect/rt_ reset would disturb).
+    BudgetHoldClock budget_hold_;
+
+    // C-style event dispatch -- esp_mqtt requires a static function.
+    // The handler_args is the MqttBroker* registered via
+    // esp_mqtt_client_register_event.
+    static void eventHandler(void* handler_args,
+                             esp_event_base_t base,
+                             int32_t event_id,
+                             void* event_data);
+    void onBeforeConnect(uint32_t now_ms);
+    void onConnected(uint32_t now_ms);
+    void onDisconnected(uint32_t now_ms, BrokerErrorClass err);
+    void onError(uint32_t now_ms, BrokerErrorClass err);
+    void escalateFailureOnce(uint32_t now_ms);  // #838: one escalation per attempt
+#endif
+};
+
+// Backoff schedule (ms): 5s, 15s, 30s, 60s, 120s, then 120s capped.
+// Plan 2 v2 keeps the same schedule as the original plan. The pool
+// staggers initiating by slot index (slot * 1000ms) to avoid thundering
+// herd on simultaneous WiFi recovery.
+uint32_t brokerBackoffMs(uint32_t retry_count);
+
+// CA cert lookup: name -> PEM string (or nullptr if name unknown).
+// Lookup table is defined in MqttBroker.cpp and references the embedded
+// PEM strings in MqttCaCerts.h. Empty/null name means no cert (caller
+// uses system trust store or skips TLS verify).
+const char* lookupCaCertPem(const char* name);
+
+}  // namespace offband

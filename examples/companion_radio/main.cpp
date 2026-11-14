@@ -2,6 +2,10 @@
 #include <Mesh.h>
 #include "MyMesh.h"
 
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+  #include <helpers/offband/OffbandExtension.h>
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
@@ -229,9 +233,15 @@ void setup() {
             WIFI_DEBUG_PRINTLN("WiFi disconnected (reason=%s). Flagging for reconnect...",
               WiFi.disconnectReasonName((wifi_err_reason_t)info.wifi_sta_disconnected.reason));
             wifi_needs_reconnect = true;
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+            offband::OffbandExtension::instance().onWifiDisconnected();
+#endif
         } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
             WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
             wifi_needs_reconnect = false;
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+            offband::OffbandExtension::instance().onWifiConnected(WiFi.localIP());
+#endif
         }
     });
 #endif
@@ -286,6 +296,10 @@ void setup() {
   the_mesh.setListener(&ui_task);
 #endif
 
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+  offband::OffbandExtension::instance().begin(&board, &the_mesh);
+#endif
+
   board.onBootComplete();
 }
 
@@ -298,6 +312,9 @@ void loop() {
 #endif
   rtc_clock.tick();
   board.loop();
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+  offband::OffbandExtension::instance().loop();
+#endif
 #ifdef HAS_EXTERNAL_WATCHDOG
   external_watchdog.loop();
 #endif

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <helpers/RefCountedDigitalPin.h>
+#include <helpers/KeyValueStore.h>
 #include <helpers/ESP32Board.h>
 #include "LoRaFEMControl.h"
 
@@ -12,11 +13,9 @@
 class HeltecV4Board : public ESP32Board {
   KeyValueStore* _prefs = NULL;
 
-  bool setLoRaFemLnaEnabled(bool enable);
-  bool isLoRaFemLnaEnabled() const;
-
 protected:
   float adc_mult = ADC_MULTIPLIER;
+  bool _led_enabled = true;   // #542: default on = today's behavior
 
 public:
   RefCountedDigitalPin periph_power;
@@ -31,6 +30,18 @@ public:
   void onAfterTransmit(void) override;
   void powerOff() override;
   uint16_t getBattMilliVolts() override;
+  const char* getManufacturerName() const override;
+
+  // External FEM LNA runtime control (used by `fem on/off` CLI + telemetry).
+  bool setLoRaFemLnaEnabled(bool enable);
+  bool canControlLoRaFemLna() const;
+  bool isLoRaFemLnaEnabled() const;
+
+  // Status/traffic (TX) LED runtime control (`led on/off` CLI). #542.
+  bool setLedEnabled(bool on);
+  bool canControlLed() const;
+  bool isLedEnabled() const;
+
   bool setAdcMultiplier(float multiplier) override {
     if (multiplier == 0.0f) {
       adc_mult = ADC_MULTIPLIER;
@@ -40,5 +51,4 @@ public:
     return true;
   }
   float getAdcMultiplier() const override { return adc_mult; }
-  const char* getManufacturerName() const override;
 };

@@ -5,6 +5,9 @@
 #include <WiFi.h>
 #endif
 #include <Mesh.h>
+#if defined(OFFBAND_OBSERVER)
+#include <helpers/wifi_observer/ObserverPipeline.h>
+#endif
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -299,7 +302,18 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 
     _serial->writeFrame(out_frame, i);
   }
+#if defined(OFFBAND_OBSERVER)
+  offband::observerLogRxTrampoline(snr, rssi, raw, len);
+#endif
 }
+
+#if defined(OFFBAND_OBSERVER)
+void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
+  if (packet) {
+    offband::observerLogRxParsedTrampoline(*packet, _radio->getLastRSSI(), _radio->getLastSNR(), (int)score, 0);
+  }
+}
+#endif
 
 bool MyMesh::isAutoAddEnabled() const {
   return (_prefs.manual_add_contacts & 1) == 0;
