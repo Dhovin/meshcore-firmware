@@ -55,7 +55,7 @@ void logCfgWriteFailure(const char*, const char*) {}
 bool getDisplayAlwaysOn() {
 #ifdef ARDUINO
     Preferences p;
-    p.begin(kNvsOffbandUi, /*readOnly=*/true);
+    p.begin(kNvsOffbandUi, /*readOnly=*/false);
     bool v = p.getBool(kKeyDisplayAlwaysOn, false);
     p.end();
     return v;
@@ -87,7 +87,7 @@ bool setDisplayAlwaysOn(bool on) {
 uint8_t getDisplayRotation() {
 #ifdef ARDUINO
     Preferences p;
-    p.begin(kNvsOffbandUi, /*readOnly=*/true);
+    p.begin(kNvsOffbandUi, /*readOnly=*/false);
     uint8_t v = p.getUChar(kKeyDisplayRotation, 0);
     p.end();
     return (v == 180) ? 180 : 0;

@@ -20,12 +20,18 @@ private:
   mesh::MainBoard* board_ = nullptr;
   MyMesh* mesh_ = nullptr;
   bool wifi_connected_ = false;
+  bool ntp_started_ = false;
+  bool ntp_synced_ = false;
 
 public:
   void begin(mesh::MainBoard* board, MyMesh* mesh);
   void onWifiConnected(IPAddress ip);
   void onWifiDisconnected();
   void loop();
+  bool handleCommand(const char* command, char* reply, size_t max_len);
+
+  bool isNtpSynced() const { return ntp_synced_; }
+  bool isWifiConnected() const { return wifi_connected_; }
 
   static OffbandExtension& instance();
 };

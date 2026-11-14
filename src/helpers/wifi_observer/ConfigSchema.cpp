@@ -67,7 +67,7 @@ static void logCfgWriteFailure(const char*, const char*) {}
 
 bool readGlobalIata(char* out, size_t out_len) {
     Preferences p;
-    p.begin(kNvsMqtt, /*readOnly=*/true);
+    p.begin(kNvsMqtt, /*readOnly=*/false);
     String v = prefStr(p, kKeyMqttIata);
     p.end();
     if (v.isEmpty()) {
@@ -99,7 +99,7 @@ bool writeGlobalIata(const char* iata) {
 
 uint16_t readStatusIntervalSec() {
     Preferences p;
-    p.begin(kNvsMqtt, /*readOnly=*/true);
+    p.begin(kNvsMqtt, /*readOnly=*/false);
     uint16_t v = p.getUShort(kKeyMqttStatusInterval, kDefaultStatusIntervalSec);
     p.end();
     // Clamp to valid range; defends against legacy values outside [10, 3600].
@@ -127,7 +127,7 @@ bool writeStatusIntervalSec(uint16_t seconds) {
 
 bool readNeighborsEnabled() {
     Preferences p;
-    p.begin(kNvsMqtt, /*readOnly=*/true);
+    p.begin(kNvsMqtt, /*readOnly=*/false);
     const bool on = p.getBool(kKeyMqttNeighborsOn, false);
     p.end();
     return on;
@@ -150,7 +150,7 @@ bool writeNeighborsEnabled(bool on) {
 
 uint16_t readNeighborsIntervalHours() {
     Preferences p;
-    p.begin(kNvsMqtt, /*readOnly=*/true);
+    p.begin(kNvsMqtt, /*readOnly=*/false);
     uint16_t h = p.getUShort(kKeyMqttNeighborsInterval, kNeighborsIntervalDefaultHours);
     p.end();
     if (h < kNeighborsIntervalMinHours) h = kNeighborsIntervalMinHours;
@@ -180,7 +180,7 @@ bool writeNeighborsIntervalHours(uint16_t hours) {
 bool readSyslogHost(char* out, size_t out_len) {
     if (out == nullptr || out_len == 0) return false;
     Preferences p;
-    p.begin(kNvsObserver, /*readOnly=*/true);
+    p.begin(kNvsObserver, /*readOnly=*/false);
     String v = prefStr(p, kKeySyslogHost);
     p.end();
     if (v.isEmpty()) {
@@ -202,7 +202,7 @@ bool writeSyslogHost(const char* host) {
     if (host[0] == '\0') {
         // #98: an empty putString does not reliably clear an NVS key; an absent
         // key reads back as "no sink", which is what clearing means.
-        p.remove(kKeySyslogHost);
+        if (p.isKey(kKeySyslogHost)) p.remove(kKeySyslogHost);
         p.end();
         return true;
     }
@@ -217,7 +217,7 @@ bool writeSyslogHost(const char* host) {
 
 uint16_t readSyslogPort() {
     Preferences p;
-    p.begin(kNvsObserver, /*readOnly=*/true);
+    p.begin(kNvsObserver, /*readOnly=*/false);
     uint16_t v = p.getUShort(kKeySyslogPort, kDefaultSyslogPort);
     p.end();
     return v == 0 ? kDefaultSyslogPort : v;
@@ -241,7 +241,7 @@ bool writeSyslogPort(uint16_t port) {
 
 bool readCaplogForwardUntilOff() {
     Preferences p;
-    p.begin(kNvsObserver, /*readOnly=*/true);
+    p.begin(kNvsObserver, /*readOnly=*/false);
     uint8_t v = p.getUChar(kKeyCaplogFwd, 0);
     p.end();
     return v != 0;
@@ -281,7 +281,7 @@ bool readBrokerConfig(uint8_t slot, BrokerConfig& out) {
     char ns[16];
     mqttBrokerNamespace(slot, ns, sizeof(ns));
     Preferences p;
-    p.begin(ns, /*readOnly=*/true);
+    p.begin(ns, /*readOnly=*/false);
     // #182: per-key read. A missing key returns its default (empty / sentinel),
     // which is correct because writeBrokerConfig REMOVES empty fields rather than
     // storing blanks. Any #181 migration blob is ignored here and is cleaned up on
@@ -351,14 +351,11 @@ bool writeBrokerConfig(uint8_t slot, const BrokerConfig& cfg) {
     };
 
     // Phase 1 -- REMOVES first: drop the migration blob + every empty field so their
-    // NVS entries become reclaimable BEFORE the value puts. On a near-full partition
-    // this lets the puts complete in one shot (GC reclaims the freed entries) instead
-    // of erroring on the first attempt -- and stores no blanks either (#182). The
-    // removes always land here even if a later put can't, so the space reclaim is
-    // what the one-time boot migration (migrateBrokerStorage) relies on.
-    p.remove(kKeyBrokerBlob);
+    // NVS entries become reclaimable BEFORE the value puts. Check isKey() first so
+    // non-existent keys don't trigger nvs_erase_key NOT_FOUND errors.
+    if (p.isKey(kKeyBrokerBlob)) p.remove(kKeyBrokerBlob);
     for (const auto& f : kStrFields) {
-        if (f.val[0] == '\0') p.remove(f.key);
+        if (f.val[0] == '\0' && p.isKey(f.key)) p.remove(f.key);
     }
 
     // Phase 2 -- value puts, each CHECKED (the #181 honesty is kept).

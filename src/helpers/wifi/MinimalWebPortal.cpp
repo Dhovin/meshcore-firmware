@@ -147,6 +147,18 @@ static void registerRoutes(AsyncWebServer* server) {
     html += "<tr><td>Wi-Fi RSSI</td><td>" + String(WiFi.RSSI()) + " dBm</td></tr>";
     html += "<tr><td>Uptime</td><td>" + formatUptime() + "</td></tr>";
 
+    time_t now_wall = time(nullptr);
+    if (now_wall > 1735689600) {
+      struct tm* tm_info = gmtime(&now_wall);
+      char time_buf[32];
+      snprintf(time_buf, sizeof(time_buf), "%04d-%02d-%02d %02d:%02d:%02d UTC",
+               tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday,
+               tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
+      html += "<tr><td>Clock (NTP)</td><td><span class='badge' style='background:#238636;'>Synced</span> " + String(time_buf) + "</td></tr>";
+    } else {
+      html += "<tr><td>Clock (NTP)</td><td><span class='badge' style='background:#d29922;color:#000;'>Syncing...</span></td></tr>";
+    }
+
     if (g_board) {
       uint16_t mv = g_board->getBattMilliVolts();
       int pct = 0;

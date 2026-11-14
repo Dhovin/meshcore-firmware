@@ -185,7 +185,7 @@ bool handleGetWifi(char* reply, size_t reply_size, const char* field) {
     if (config::strEq(field, "ssid")) {
 #ifdef ARDUINO
         Preferences p;
-        if (!p.begin("wifi", /*readOnly=*/true)) {
+        if (!p.begin("wifi", /*readOnly=*/false)) {
             snprintf(reply, reply_size,
                      "ERROR: cannot open NVS namespace 'wifi'\n");
             return true;
@@ -249,7 +249,7 @@ bool handleGetWifi(char* reply, size_t reply_size, const char* field) {
         String ssid;
         {
             Preferences p;
-            if (p.begin("wifi", /*readOnly=*/true)) { ssid = offband::prefStr(p, "ssid"); p.end(); }
+            if (p.begin("wifi", /*readOnly=*/false)) { ssid = offband::prefStr(p, "ssid"); p.end(); }
         }
         if (ssid.isEmpty()) {
             snprintf(reply, reply_size, "wifi.status = AwaitingSetup\n");
@@ -344,7 +344,7 @@ bool wifiConfigGet(const char* key, char* reply, size_t reply_size) {
     if (config::strEq(key, "wifi.enabled")) {
 #ifdef ARDUINO
         Preferences p; bool en = true;
-        if (p.begin("wifi", /*readOnly=*/true)) { en = p.getBool("enabled", true); p.end(); }
+        if (p.begin("wifi", /*readOnly=*/false)) { en = p.getBool("enabled", true); p.end(); }
         snprintf(reply, reply_size, "wifi.enabled = %d\n", en ? 1 : 0);
 #else
         snprintf(reply, reply_size, "wifi.enabled = (host build)\n");

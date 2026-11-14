@@ -8,6 +8,9 @@
 #if defined(OFFBAND_OBSERVER)
 #include <helpers/wifi_observer/ObserverPipeline.h>
 #endif
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+#include <helpers/offband/OffbandExtension.h>
+#endif
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -2093,12 +2096,25 @@ void MyMesh::enterCLIRescue() {
 bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char* reply) {
   while (*command == ' ') command++; // skip leading spaces
 
-  if (strlen(command) > 4 && command[2] == '|') { // optional prefix (for companion radio CLI)
+  if (strlen(command) > 3 && command[2] == '|') { // optional prefix (for companion radio CLI)
     memcpy(reply, command, 3);                    // reflect the prefix back
     reply += 3;
     *reply = 0;
     command += 3;
+    while (*command == ' ') command++;
+  } else if (strlen(command) > 2 && command[1] == '|') {
+    memcpy(reply, command, 2);
+    reply += 2;
+    *reply = 0;
+    command += 2;
+    while (*command == ' ') command++;
   }
+
+#if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
+  if (offband::OffbandExtension::instance().handleCommand(command, reply, 150)) {
+    return true;
+  }
+#endif
 
   if (_prefs.getRadioPrefs()->handleCommand(command, sender_timestamp, reply)) {  // is radio CLI command?
     if (_prefs.getRadioPrefs()->isDirty()) { savePrefs(); }

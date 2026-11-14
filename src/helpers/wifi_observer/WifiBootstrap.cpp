@@ -227,7 +227,11 @@ void WifiBootstrap::loop() {
 }
 
 bool WifiBootstrap::isStaConnected() const {
+#ifdef ARDUINO
+    return (state_ == WifiBootstrapState::StaConnected) || (WiFi.status() == WL_CONNECTED);
+#else
     return state_ == WifiBootstrapState::StaConnected;
+#endif
 }
 
 #ifdef OFFBAND_OBSERVER_BLE_COMPANION
