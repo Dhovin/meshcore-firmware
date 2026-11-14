@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [firmware-base, main, dev]
+    paths:
+      - 'src/**'
+      - 'examples/**'
+      - 'variants/**'
+      - 'platformio.ini'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [firmware-base, main, dev]
+    paths:
+      - 'src/**'
+      - 'examples/**'
+      - 'variants/**'
+      - 'platformio.ini'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - heltec_v4_companion_observer_wifi
+          - Heltec_v3_companion_observer_wifi
+          - heltec_v4_companion_radio_ble
+          - Heltec_v3_companion_radio_ble
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Firmware
+        run: pio run -e ${{ matrix.environment }}

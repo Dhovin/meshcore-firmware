@@ -3,9 +3,14 @@ name: Run Unit Tests
 on:
   push:
     branches:
+      - firmware-base
       - main
       - master
   pull_request:
+    branches:
+      - firmware-base
+      - main
+      - master
   workflow_dispatch:
 
 jobs:

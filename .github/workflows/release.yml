@@ -1,0 +1,148 @@
+name: Release Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'offband-v*'
+      - 'meshcore-v*'
+      - 'heltec-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version / tag (e.g. v1.18.0)'
+        required: true
+        default: 'v1.18.0'
+      publish_release:
+        description: 'Publish GitHub Release with built binaries'
+        required: true
+        type: boolean
+        default: true
+      env_filter:
+        description: 'Optional environment filter (e.g. heltec_v4_companion_observer_wifi, or blank for all curated targets)'
+        required: false
+        default: ''
+      draft:
+        description: 'Publish as a draft release'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as a pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.read.outputs.envs }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        name: Read target env list
+        run: |
+          filter="${{ github.event.inputs.env_filter }}"
+          if [ -n "$filter" ]; then
+            envs=$(echo "$filter" | tr ',' '\n' | tr ' ' '\n' | grep -vE '^[[:space:]]*$' | jq -R . | jq -cs .)
+          else
+            envs=$(grep -vE '^[[:space:]]*#' .github/release-envs.txt \
+                   | grep -vE '^[[:space:]]*$' \
+                   | jq -R . | jq -cs .)
+          fi
+          echo "envs=$envs" >> "$GITHUB_OUTPUT"
+          echo "Selected $(echo "$envs" | jq 'length') target env(s) for release."
+
+  build:
+    needs: list
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.list.outputs.envs) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-build-environment
+
+      - name: Resolve firmware version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ref="${GITHUB_REF_NAME}"
+            ref="${ref#offband-}"
+            ref="${ref#meshcore-}"
+            echo "version=${ref}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build ${{ matrix.env }}
+        env:
+          FIRMWARE_VERSION: ${{ steps.ver.outputs.version }}
+        run: /usr/bin/env bash build.sh build-firmware ${{ matrix.env }}
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.env }}
+          path: out/*
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    needs: [list, build]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Collect firmware files
+        run: |
+          mkdir -p out
+          find dist -type f -exec cp {} out/ \;
+          echo "Collected $(find out -type f | wc -l) firmware file(s)."
+
+      - name: Resolve release tag and version
+        id: rel
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="${{ github.event.inputs.version }}"
+          fi
+          ver="${tag}"
+          ver="${ver#offband-}"
+          ver="${ver#meshcore-}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${ver}" >> "$GITHUB_OUTPUT"
+          echo "title=Offband Firmware ${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        run: |
+          echo "## Offband Firmware Release" > body.md
+          echo "Built on MeshCore v1.18.0 foundation." >> body.md
+          cat .github/release-footer.md >> body.md 2>/dev/null || true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.rel.outputs.title }}
+          tag_name: ${{ steps.rel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ (github.event_name == 'workflow_dispatch' && inputs.prerelease) || contains(steps.rel.outputs.tag, '-rc') || contains(steps.rel.outputs.tag, '-beta') }}
+          draft: ${{ (github.event_name == 'workflow_dispatch' && inputs.draft) || false }}
+          make_latest: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.prerelease || inputs.draft)) && !contains(steps.rel.outputs.tag, '-rc') && !contains(steps.rel.outputs.tag, '-beta') }}
+          body_path: body.md
+          generate_release_notes: true
+          files: out/*
+          fail_on_unmatched_files: false
