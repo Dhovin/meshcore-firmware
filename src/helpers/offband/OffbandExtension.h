@@ -5,7 +5,9 @@
 
 #if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
 
+#if defined(OFFBAND_WEB_PORTAL)
 #include <helpers/wifi/MinimalWebPortal.h>
+#endif
 #if defined(OFFBAND_OBSERVER)
   #include <helpers/wifi_observer/WifiObserver.h>
   #include <helpers/wifi_observer/ObserverPipeline.h>

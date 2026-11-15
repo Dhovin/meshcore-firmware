@@ -2,8 +2,11 @@
 
 #if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
 
+#include <WiFi.h>
 #include "../../examples/companion_radio/MyMesh.h"
-#include <helpers/wifi/MinimalWebPortal.h>
+#if defined(OFFBAND_WEB_PORTAL)
+  #include <helpers/wifi/MinimalWebPortal.h>
+#endif
 #if defined(OFFBAND_OBSERVER)
   #include <helpers/wifi_observer/WifiObserver.h>
   #include <helpers/wifi_observer/ObserverPipeline.h>
@@ -62,7 +65,7 @@ void OffbandExtension::onWifiConnected(IPAddress ip) {
   }
 #endif
 
-#if defined(ESP32) && (defined(OFFBAND_WEB_PORTAL) || defined(OFFBAND_OBSERVER))
+#if defined(ESP32) && defined(OFFBAND_WEB_PORTAL)
   const char* node_name = mesh_ ? mesh_->getNodeName() : "MeshCore";
   MinimalWebPortal::begin(board_, node_name, "Observer", nullptr);
 #endif
@@ -110,8 +113,17 @@ bool OffbandExtension::handleCommand(const char* command, char* reply, size_t ma
   if (strcmp(command, "help mqtt") == 0) {
     snprintf(reply, max_len,
       "MQTT commands:\n"
-      "  mqtt status | view <N> | enable <N> | disable <N> | clear <N>\n"
-      "  get/set mqtt.broker.<N>.<key>");
+      "  mqtt status|view <N>|enable <N>|disable <N>|clear <N>\n"
+      "  get/set mqtt.broker.<N>.<key>\n"
+      "  help mqtt keys");
+    return true;
+  }
+  if (strcmp(command, "help mqtt keys") == 0) {
+    snprintf(reply, max_len,
+      "MQTT broker keys:\n"
+      "  url, port, transport (tcp|tls|wss),\n"
+      "  auth_type (none|basic|jwt),\n"
+      "  username, password, ca_cert (letsencrypt|isrg-x2|gts-r4|none)");
     return true;
   }
   if (strcmp(command, "help wifi") == 0) {

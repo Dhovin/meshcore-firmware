@@ -205,6 +205,9 @@ private:
     void noteFailure();   // #739: escalate penalty, set Backoff or Failed
 #endif
 
+    const char* getEffectiveUri() const;
+    mutable char effective_uri_[160] = {0};
+
     uint8_t              slot_  = 0xFF;
     BrokerConfig         cfg_;
     BrokerRuntimeState   rt_;

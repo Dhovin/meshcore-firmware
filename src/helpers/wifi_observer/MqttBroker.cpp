@@ -134,16 +134,73 @@ static bool tlsHeapBudgetOk() {
 const char* lookupCaCertPem(const char* name) {
     if (name == nullptr || name[0] == '\0') return nullptr;
 #ifdef ARDUINO
-    if (strcmp(name, "letsencrypt") == 0) return mqtt_ca_certs::kEastmeshIsrgRootX1Pem;
-    if (strcmp(name, "eastmesh")    == 0) return mqtt_ca_certs::kEastmeshIsrgRootX1Pem;
-    if (strcmp(name, "isrg-x1")     == 0) return mqtt_ca_certs::kEastmeshIsrgRootX1Pem;
-    if (strcmp(name, "isrg_root_x1")== 0) return mqtt_ca_certs::kEastmeshIsrgRootX1Pem;
-    if (strcmp(name, "isrg-x2")     == 0) return mqtt_ca_certs::kIsrgRootX2Pem;
-    if (strcmp(name, "gts-r4")      == 0) return mqtt_ca_certs::kGtsRootR4Pem;
+    if (strcmp(name, "letsencrypt")  == 0 ||
+        strcmp(name, "lets-encrypt") == 0 ||
+        strcmp(name, "le")           == 0 ||
+        strcmp(name, "eastmesh")     == 0 ||
+        strcmp(name, "isrg-x1")      == 0 ||
+        strcmp(name, "isrg_x1")      == 0 ||
+        strcmp(name, "isrg_root_x1") == 0 ||
+        strcmp(name, "isrg-root-x1") == 0) {
+        return mqtt_ca_certs::kEastmeshIsrgRootX1Pem;
+    }
+    if (strcmp(name, "isrg-x2")      == 0 ||
+        strcmp(name, "isrg_x2")      == 0 ||
+        strcmp(name, "isrg_root_x2") == 0 ||
+        strcmp(name, "isrg-root-x2") == 0) {
+        return mqtt_ca_certs::kIsrgRootX2Pem;
+    }
+    if (strcmp(name, "gts-r4")       == 0 ||
+        strcmp(name, "gts_r4")       == 0 ||
+        strcmp(name, "gts-root-r4")  == 0 ||
+        strcmp(name, "google")       == 0) {
+        return mqtt_ca_certs::kGtsRootR4Pem;
+    }
+    if (strcmp(name, "combined")     == 0) {
+        return mqtt_ca_certs::kCombinedPem;
+    }
+    if (strcmp(name, "none")         == 0 ||
+        strcmp(name, "null")         == 0 ||
+        strcmp(name, "off")          == 0) {
+        return nullptr;
+    }
 #else
     (void)name;
 #endif
     return nullptr;  // unknown name -- caller treats as missing cert
+}
+
+const char* MqttBroker::getEffectiveUri() const {
+    if (cfg_.url[0] == '\0') {
+        return "";
+    }
+    if (strstr(cfg_.url, "://") != nullptr) {
+        return cfg_.url;
+    }
+    // Synthesize URI from transport, url, and port
+    const char* scheme = "mqtt://";
+    if (cfg_.transport == BrokerTransport::Wss) {
+        scheme = "wss://";
+    } else if (cfg_.transport == BrokerTransport::Tls) {
+        scheme = "mqtts://";
+    }
+    bool has_colon = (strchr(cfg_.url, ':') != nullptr);
+    bool has_slash = (strchr(cfg_.url, '/') != nullptr);
+
+    if (has_colon || cfg_.port == 0) {
+        if (cfg_.transport == BrokerTransport::Wss && !has_slash) {
+            snprintf(effective_uri_, sizeof(effective_uri_), "%s%s/mqtt", scheme, cfg_.url);
+        } else {
+            snprintf(effective_uri_, sizeof(effective_uri_), "%s%s", scheme, cfg_.url);
+        }
+    } else {
+        if (cfg_.transport == BrokerTransport::Wss && !has_slash) {
+            snprintf(effective_uri_, sizeof(effective_uri_), "%s%s:%u/mqtt", scheme, cfg_.url, (unsigned)cfg_.port);
+        } else {
+            snprintf(effective_uri_, sizeof(effective_uri_), "%s%s:%u", scheme, cfg_.url, (unsigned)cfg_.port);
+        }
+    }
+    return effective_uri_;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +224,7 @@ const char* lookupCaCertPem(const char* name) {
 void MqttBroker::populateBaseConfig(esp_mqtt_client_config_t& mqcfg) const {
     const int keepalive_sec = 60;
 #if ESP_IDF_VERSION_MAJOR >= 5
-    mqcfg.broker.address.uri = cfg_.url;
+    mqcfg.broker.address.uri = getEffectiveUri();
     mqcfg.session.keepalive  = keepalive_sec;
     if (cfg_.transport == BrokerTransport::Tls ||
         cfg_.transport == BrokerTransport::Wss) {
@@ -175,7 +232,7 @@ void MqttBroker::populateBaseConfig(esp_mqtt_client_config_t& mqcfg) const {
         if (pem != nullptr) mqcfg.broker.verification.certificate = pem;
     }
 #else
-    mqcfg.uri       = cfg_.url;
+    mqcfg.uri       = getEffectiveUri();
     mqcfg.keepalive = keepalive_sec;
     if (cfg_.transport == BrokerTransport::Tls ||
         cfg_.transport == BrokerTransport::Wss) {

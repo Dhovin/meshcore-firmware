@@ -7,7 +7,7 @@
 #include <esp_system.h>
 #include <helpers/ESP32Board.h>
 
-#if __has_include(<ESPAsyncWebServer.h>) && __has_include(<AsyncElegantOTA.h>)
+#if defined(OFFBAND_WEB_PORTAL) && __has_include(<ESPAsyncWebServer.h>) && __has_include(<AsyncElegantOTA.h>)
   #include <ESPAsyncWebServer.h>
   #include <AsyncElegantOTA.h>
   #define HAS_ASYNC_WEB_PORTAL 1
@@ -240,13 +240,14 @@ static void registerRoutes(AsyncWebServer* server) {
     // Read current settings
     String host = "192.168.1.100";
     uint16_t port = 1883;
-    uint8_t transport = 0; // 0 = plain, 1 = tls
+    uint8_t transport = 0; // 0 = plain tcp, 1 = tls, 2 = wss
     uint8_t auth = 0;      // 0 = none, 1 = basic, 2 = jwt
     String user = "";
     String prefix = "meshcore/v1";
     String iata = "XYZ";
     uint16_t interval = 60;
     bool enabled = true;
+    String ca_cert = "letsencrypt";
 
 #if HAS_OBSERVER_CONFIG
     BrokerConfig cfg;
@@ -259,6 +260,7 @@ static void registerRoutes(AsyncWebServer* server) {
       enabled = cfg.enabled;
       if (cfg.topic_prefix[0]) prefix = cfg.topic_prefix;
       if (cfg.iata_override[0]) iata = cfg.iata_override;
+      if (cfg.ca_cert_name[0]) ca_cert = cfg.ca_cert_name;
     }
     char giata[16] = {0};
     if (readGlobalIata(giata, sizeof(giata)) && giata[0]) {
@@ -288,10 +290,17 @@ static void registerRoutes(AsyncWebServer* server) {
     const BrokerRuntimeState& rt0 = b0.runtime();
     const BrokerConfig& cur_cfg0 = b0.config();
 
+    String trans_str = "TCP";
+    if (cur_cfg0.transport == BrokerTransport::Wss) trans_str = "WSS";
+    else if (cur_cfg0.transport == BrokerTransport::Tls) trans_str = "TLS";
+
     html += "<div class='card' style='background:#161b22;border:1px solid #30363d;'>";
     html += "<h2>Live Connection Status</h2><table>";
     html += "<tr><td>Status</td><td>" + formatBrokerState(rt0.state) + "</td></tr>";
-    html += "<tr><td>Active Broker</td><td>" + (cur_cfg0.url[0] ? (String(cur_cfg0.url) + ":" + String(cur_cfg0.port)) : String("<span style='color:#8b949e;'>(none configured)</span>")) + "</td></tr>";
+    html += "<tr><td>Active Broker</td><td>" + (cur_cfg0.url[0] ? (String(cur_cfg0.url) + " (" + trans_str + ", port " + String(cur_cfg0.port) + ")") : String("<span style='color:#8b949e;'>(none configured)</span>")) + "</td></tr>";
+    if (cur_cfg0.transport == BrokerTransport::Tls || cur_cfg0.transport == BrokerTransport::Wss) {
+      html += "<tr><td>CA Certificate</td><td>" + (cur_cfg0.ca_cert_name[0] ? String(cur_cfg0.ca_cert_name) : String("None / system store")) + "</td></tr>";
+    }
     html += "<tr><td>Last Error</td><td>" + formatBrokerError(rt0.last_error_class) + "</td></tr>";
     html += "<tr><td>Connection Attempts</td><td>" + String(rt0.retry_count) + "</td></tr>";
     if (rt0.last_publish_ms > 0) {
@@ -315,18 +324,28 @@ static void registerRoutes(AsyncWebServer* server) {
     html += "<option value='0'" + String(!enabled ? " selected" : "") + ">Disabled</option>";
     html += "</select>";
 
-    html += "<label>Broker Host / IP Address</label>";
-    html += "<input type='text' name='host' value='" + host + "' placeholder='e.g. 192.168.1.100 or broker.hivemq.com' required>";
+    html += "<label>Broker Host / IP / URI</label>";
+    html += "<input type='text' name='host' value='" + host + "' placeholder='e.g. 192.168.1.100, broker.hivemq.com, or wss://.../mqtt' required>";
 
     html += "<label>Port</label>";
     html += "<input type='number' name='port' value='" + String(port) + "' min='1' max='65535' required>";
-    html += "<div class='help'>Default: 1883 for Plain TCP, 8883 for TLS</div>";
+    html += "<div class='help'>Default: 1883 for TCP, 8883 for TLS, 443 or 9002 for WSS</div>";
 
-    html += "<label>Transport (TLS is not needed for local setups)</label>";
+    html += "<label>Transport Protocol</label>";
     html += "<select name='transport'>";
-    html += "<option value='0'" + String(transport == 0 ? " selected" : "") + ">Plain TCP (Recommended for Heltec V4, zero TLS overhead)</option>";
-    html += "<option value='1'" + String(transport == 1 ? " selected" : "") + ">TLS Encrypted (Requires CA cert in flash)</option>";
+    html += "<option value='0'" + String(transport == 0 ? " selected" : "") + ">Plain TCP (mqtt:// - port 1883, zero TLS overhead)</option>";
+    html += "<option value='1'" + String(transport == 1 ? " selected" : "") + ">TLS Encrypted (mqtts:// - port 8883)</option>";
+    html += "<option value='2'" + String(transport == 2 ? " selected" : "") + ">WSS / Secure WebSocket (wss:// - port 443 / 9002)</option>";
     html += "</select>";
+
+    html += "<label>TLS / WSS CA Certificate</label>";
+    html += "<select name='ca_cert'>";
+    html += "<option value='letsencrypt'" + String(ca_cert == "letsencrypt" || ca_cert == "isrg-x1" ? " selected" : "") + ">Let's Encrypt (ISRG Root X1 - Recommended)</option>";
+    html += "<option value='isrg-x2'" + String(ca_cert == "isrg-x2" ? " selected" : "") + ">Let's Encrypt ECDSA (ISRG Root X2)</option>";
+    html += "<option value='gts-r4'" + String(ca_cert == "gts-r4" ? " selected" : "") + ">Google Trust Services (GTS Root R4 - LetsMesh / CoreComms)</option>";
+    html += "<option value='none'" + String(ca_cert == "none" || ca_cert == "" ? " selected" : "") + ">None (No verification / system default)</option>";
+    html += "</select>";
+    html += "<div class='help'>Select Let's Encrypt for public brokers with Let's Encrypt SSL/TLS certificates.</div>";
 
     html += "<label>Authentication</label>";
     html += "<select name='auth'>";
@@ -368,6 +387,7 @@ static void registerRoutes(AsyncWebServer* server) {
     int auth = request->hasParam("auth", true) ? request->getParam("auth", true)->value().toInt() : 0;
     String user = request->hasParam("username", true) ? request->getParam("username", true)->value() : "";
     String pass = request->hasParam("password", true) ? request->getParam("password", true)->value() : "";
+    String ca_cert = request->hasParam("ca_cert", true) ? request->getParam("ca_cert", true)->value() : "letsencrypt";
     String prefix = request->hasParam("topic_prefix", true) ? request->getParam("topic_prefix", true)->value() : "meshcore/v1";
     String iata = request->hasParam("iata", true) ? request->getParam("iata", true)->value() : "XYZ";
     int interval = request->hasParam("interval", true) ? request->getParam("interval", true)->value().toInt() : 60;
@@ -382,10 +402,22 @@ static void registerRoutes(AsyncWebServer* server) {
     readBrokerConfig(0, cfg);
     if (host.length() > 0) strncpy(cfg.url, host.c_str(), sizeof(cfg.url) - 1);
     cfg.port = (uint16_t)port;
-    cfg.transport = (transport == 1) ? BrokerTransport::Tls : BrokerTransport::Tcp;
+    if (transport == 2) {
+      cfg.transport = BrokerTransport::Wss;
+    } else if (transport == 1) {
+      cfg.transport = BrokerTransport::Tls;
+    } else {
+      cfg.transport = BrokerTransport::Tcp;
+    }
     cfg.auth_type = (auth == 1) ? BrokerAuthType::Basic : (auth == 2 ? BrokerAuthType::Jwt : BrokerAuthType::None);
     strncpy(cfg.username, user.c_str(), sizeof(cfg.username) - 1);
     if (pass.length() > 0) strncpy(cfg.password, pass.c_str(), sizeof(cfg.password) - 1);
+    if (ca_cert == "none" || ca_cert.length() == 0) {
+      cfg.ca_cert_name[0] = '\0';
+    } else {
+      strncpy(cfg.ca_cert_name, ca_cert.c_str(), sizeof(cfg.ca_cert_name) - 1);
+      cfg.ca_cert_name[sizeof(cfg.ca_cert_name) - 1] = '\0';
+    }
     strncpy(cfg.topic_prefix, prefix.c_str(), sizeof(cfg.topic_prefix) - 1);
     strncpy(cfg.iata_override, iata.c_str(), sizeof(cfg.iata_override) - 1);
     cfg.enabled = enabled;
