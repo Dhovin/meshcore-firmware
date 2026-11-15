@@ -123,6 +123,9 @@ public:
   void handleCmdFrame(size_t len);
   bool advert();
   void enterCLIRescue();
+#if defined(OFFBAND_OBSERVER)
+  void updateObserverStatusSnapshot();
+#endif
 
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
 

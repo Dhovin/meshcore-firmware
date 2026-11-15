@@ -51,12 +51,20 @@ void OffbandExtension::begin(mesh::MainBoard* board, MyMesh* mesh) {
         FIRMWARE_VERSION,
         FIRMWARE_VERSION,
         board_ ? board_->getManufacturerName() : "MeshCore");
+
+    mesh_->updateObserverStatusSnapshot();
   }
 #endif
 }
 
 void OffbandExtension::onWifiConnected(IPAddress ip) {
   wifi_connected_ = true;
+
+#if defined(OFFBAND_OBSERVER)
+  if (mesh_) {
+    mesh_->updateObserverStatusSnapshot();
+  }
+#endif
 
 #if defined(ESP32)
   if (!ntp_started_) {
@@ -93,6 +101,14 @@ void OffbandExtension::loop() {
 #endif
 
 #if defined(OFFBAND_OBSERVER)
+  if (mesh_) {
+    static uint32_t s_last_snap_ms = 0;
+    uint32_t now_ms = millis();
+    if (s_last_snap_ms == 0 || (now_ms - s_last_snap_ms >= 5000)) {
+      s_last_snap_ms = now_ms ? now_ms : 1;
+      mesh_->updateObserverStatusSnapshot();
+    }
+  }
   wifiObserverLoop();
 #endif
 }

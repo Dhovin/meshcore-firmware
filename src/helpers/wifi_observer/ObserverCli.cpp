@@ -212,13 +212,17 @@ static bool handleStatus(char* reply, size_t reply_size, MqttBrokerPool& pool, i
         }
         const BrokerConfig& cfg = b.config();
         const BrokerRuntimeState& rt = b.runtime();
+        const char* eff_iata = cfg.iata_override[0]
+                                   ? cfg.iata_override
+                                   : (pool.globalIata()[0] ? pool.globalIata() : "NONE");
         snprintf(reply, reply_size,
-                 "[%d] %s %s/%s %.40s\nstate=%s err=%s r=%u\nown=%c eml=%c ca=%s aud=%c",
+                 "[%d] %s %s/%s %.40s\nstate=%s err=%s r=%u\niata=%s own=%c eml=%c ca=%s aud=%c",
                  filter_slot,
                  cfg.enabled ? "ON" : "off",
                  transportStr(cfg.transport), authStr(cfg.auth_type),
                  shortUrl(cfg.url),
                  stateStr(rt.state), brokerErrorWire(rt.last_error_class), (unsigned)rt.retry_count,
+                 eff_iata,
                  cfg.jwt_owner[0] ? 'Y' : 'N',
                  cfg.jwt_email[0] ? 'Y' : 'N',
                  cfg.ca_cert_name[0] ? cfg.ca_cert_name : "NONE",
@@ -304,7 +308,7 @@ static bool handleEnableSet(char* reply, size_t reply_size, MqttBrokerPool& pool
 }
 
 // "set mqtt.iata <code>"
-static bool handleSetIata(char* reply, size_t reply_size, const char* value) {
+static bool handleSetIata(char* reply, size_t reply_size, MqttBrokerPool& pool, const char* value) {
     if (value == nullptr || *value == '\0') {
         snprintf(reply, reply_size, "ERROR: usage: set mqtt.iata <code>\n");
         return true;
@@ -313,6 +317,7 @@ static bool handleSetIata(char* reply, size_t reply_size, const char* value) {
         snprintf(reply, reply_size, "ERROR: failed to save mqtt.iata (NVS write failed)\n");
         return true;
     }
+    pool.reloadGlobalIata();
     snprintf(reply, reply_size, "mqtt.iata = %s\n", value);
     return true;
 }
@@ -906,6 +911,16 @@ bool dispatchObserverCli(const char* cmd, char* reply, size_t reply_size,
             return true;
         }
 #endif
+        if (eq(rest, "mqtt.iata")) {
+            char iata[8] = {0};
+            readGlobalIata(iata, sizeof(iata));
+            snprintf(reply, reply_size, "mqtt.iata = %s\n", iata[0] ? iata : "(unset)");
+            return true;
+        }
+        if (eq(rest, "mqtt.status_interval")) {
+            snprintf(reply, reply_size, "mqtt.status_interval = %u\n", (unsigned)readStatusIntervalSec());
+            return true;
+        }
         // Unknown `get` key. Return false so CliPassthrough falls
         // through to its "unknown:" reply rather than us claiming
         // ownership.
@@ -921,7 +936,7 @@ bool dispatchObserverCli(const char* cmd, char* reply, size_t reply_size,
     if (strncmp(rest, "mqtt.iata", 9) == 0) {
         const char* v = rest + 9;
         while (*v == ' ') v++;
-        return handleSetIata(reply, reply_size, v);
+        return handleSetIata(reply, reply_size, pool, v);
     }
     if (strncmp(rest, "mqtt.status_interval", 20) == 0) {
         const char* v = rest + 20;
@@ -1025,7 +1040,7 @@ static bool observerConfigSet(const char* key, const char* value, char* reply, s
     reply[0] = '\0';
     MqttBrokerPool& pool = wifiObserverPool();
 
-    if (eq(key, "mqtt.iata"))            return handleSetIata(reply, reply_size, value);
+    if (eq(key, "mqtt.iata"))            return handleSetIata(reply, reply_size, pool, value);
     if (eq(key, "mqtt.status_interval")) return handleSetStatusInterval(reply, reply_size, value);
 
     // #370: display.* and wifi.* moved to their own providers

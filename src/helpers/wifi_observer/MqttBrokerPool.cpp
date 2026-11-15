@@ -301,6 +301,15 @@ void MqttBrokerPool::setStatusSnapshot(const MqttStatusSnapshot& snap) {
     have_snapshot_    = true;
 }
 
+void MqttBrokerPool::reloadGlobalIata() {
+#ifdef ARDUINO
+    if (!readGlobalIata(global_iata_, sizeof(global_iata_))) {
+        global_iata_[0] = '\0';
+    }
+#endif
+    last_status_ms_ = 0;
+}
+
 // ---------------------------------------------------------------------------
 // publishPacket -- fan-out to every enabled+Up broker
 // ---------------------------------------------------------------------------
@@ -616,7 +625,7 @@ void MqttBrokerPool::neighborsFanOutTick(uint32_t now_ms) {
 void MqttBrokerPool::publishStatusIfDue(uint32_t now_ms) {
     if (!have_snapshot_) return;
 
-    // Periodically re-read status interval from NVS (CLI may have changed it).
+    // Periodically re-read status interval and global IATA from NVS (CLI may have changed them).
     static uint32_t s_last_interval_recheck_ms = 0;
     if (now_ms - s_last_interval_recheck_ms > status_interval_check_ms_) {
         s_last_interval_recheck_ms = now_ms;
@@ -624,6 +633,9 @@ void MqttBrokerPool::publishStatusIfDue(uint32_t now_ms) {
         uint16_t fresh = readStatusIntervalSec();
         if (fresh != status_interval_sec_) {
             status_interval_sec_ = fresh;
+        }
+        if (!readGlobalIata(global_iata_, sizeof(global_iata_))) {
+            global_iata_[0] = '\0';
         }
 #endif
     }
@@ -976,6 +988,7 @@ void MqttBrokerPool::workerLoop() {
             const BrokerState now_st = brokers_[s].runtime().state;
             if (now_st == BrokerState::Up && last_known_state_[s] != BrokerState::Up) {
                 last_served_epoch_[s] = ++service_epoch_;
+                last_status_ms_ = 0;
             }
             last_known_state_[s] = now_st;
         }

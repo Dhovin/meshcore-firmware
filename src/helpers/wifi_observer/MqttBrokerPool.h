@@ -130,6 +130,8 @@ public:
     uint8_t enabledCount()    const;
     uint8_t upCount()         const;
     const MqttBroker& broker(uint8_t slot) const { return brokers_[slot]; }
+    const char* globalIata() const { return global_iata_; }
+    void reloadGlobalIata();
     // #175: how many published messages this broker has not yet sent (0 = caught
     // up). Non-zero on a rotated-out or backlogged feed; a persistently large
     // value means that broker is misbehaving -- see the issue's overflow note.

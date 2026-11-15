@@ -313,8 +313,38 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 #if defined(OFFBAND_OBSERVER)
 void MyMesh::logRx(mesh::Packet* packet, int len, float score) {
   if (packet) {
-    offband::observerLogRxParsedTrampoline(*packet, _radio->getLastRSSI(), _radio->getLastSNR(), (int)score, 0);
+    offband::observerLogRxParsedTrampoline(
+        *packet,
+        (int)_radio->getLastRSSI(),
+        _radio->getLastSNR(),
+        (int)(score * 1000.0f),
+        (int)_radio->getEstAirtimeFor(len));
   }
+}
+
+void MyMesh::updateObserverStatusSnapshot() {
+  offband::MqttStatusSnapshot snap = {};
+  snap.battery_mv     = board.getBattMilliVolts();
+  snap.uptime_secs    = _ms->getMillis() / 1000;
+  snap.error_flags    = _err_flags;
+  snap.queue_len      = (uint16_t)_mgr->getOutboundTotal();
+  snap.noise_floor    = _radio->getNoiseFloor();
+  snap.tx_air_secs    = getTotalAirTime() / 1000;
+  snap.rx_air_secs    = getReceiveAirTime() / 1000;
+  snap.recv_errors    = radio_driver.getPacketsRecvErrors();
+  snap.radio_freq     = _prefs.freq;
+  snap.radio_bw       = _prefs.bw;
+  snap.radio_sf       = _prefs.sf;
+  snap.radio_cr       = _prefs.cr;
+  snap.repeat_enabled = _prefs.isRepeatEn();
+  if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
+    snap.loc_valid = false;
+  } else {
+    snap.node_lat  = sensors.node_lat;
+    snap.node_lon  = sensors.node_lon;
+    snap.loc_valid = true;
+  }
+  offband::wifiObserverSetStatusSnapshot(snap);
 }
 #endif
 
