@@ -214,9 +214,10 @@ bool handleGetWifi(char* reply, size_t reply_size, const char* field) {
             case WifiBootstrapState::StaConnected:  st = "StaConnected";  break;
             case WifiBootstrapState::StaFailed:     st = "StaFailed";     break;
         }
-        if (state == WifiBootstrapState::StaConnected) {
-            snprintf(reply, reply_size, "wifi.status = %s ip=%s\n",
-                     st, WiFi.localIP().toString().c_str());
+        if (state == WifiBootstrapState::StaConnected ||
+            (state == WifiBootstrapState::Boot && WiFi.status() == WL_CONNECTED)) {
+            snprintf(reply, reply_size, "wifi.status = StaConnected ip=%s\n",
+                     WiFi.localIP().toString().c_str());
         } else if (state == WifiBootstrapState::StaConnecting) {
             // #696: the field cannot read the serial log -- a remote
             // reporter only ever sees this line. A bare "StaConnecting"

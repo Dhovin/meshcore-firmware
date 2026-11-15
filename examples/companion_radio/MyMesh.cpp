@@ -1145,44 +1145,18 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (!handleCommand(text, 0, reply_buf)) {
       strcat(reply_buf, "Unknown command");   // reply_buf may have cmd prefix from 'text'
     }
-    const size_t max_chunk = MAX_FRAME_SIZE - 1;
-    const char* p = reply_buf;
-    size_t rem = strlen(p);
-    if (rem == 0) {
-      out_frame[0] = RESP_CODE_CLI_REPLY;
-      _serial->writeFrame(out_frame, 1);
-    } else {
-      while (rem > 0) {
-        size_t chunk = rem;
-        if (chunk > max_chunk) {
-          chunk = max_chunk;
-          // Split at last newline within max_chunk if one exists
-          for (size_t k = chunk; k > 0; --k) {
-            if (p[k - 1] == '\n') {
-              chunk = k - 1; // exclude trailing newline between chunks
-              break;
-            }
-          }
-          if (chunk == 0) chunk = max_chunk;
-        }
-        // Trim trailing newline on the chunk
-        size_t send_len = chunk;
-        while (send_len > 0 && (p[send_len - 1] == '\n' || p[send_len - 1] == '\r')) {
-          send_len--;
-        }
-        if (send_len > 0) {
-          out_frame[0] = RESP_CODE_CLI_REPLY;
-          memcpy(&out_frame[1], p, send_len);
-          _serial->writeFrame(out_frame, 1 + send_len);
-        }
-        p += chunk;
-        rem -= chunk;
-        while (rem > 0 && (*p == '\n' || *p == '\r')) {
-          p++;
-          rem--;
-        }
-      }
+    size_t rlen = strlen(reply_buf);
+    while (rlen > 0 && (reply_buf[rlen - 1] == '\n' || reply_buf[rlen - 1] == '\r')) {
+      rlen--;
     }
+    if (rlen > MAX_FRAME_SIZE - 4) {
+      rlen = MAX_FRAME_SIZE - 4;
+    }
+    out_frame[0] = RESP_CODE_CLI_REPLY;
+    if (rlen > 0) {
+      memcpy(&out_frame[1], reply_buf, rlen);
+    }
+    _serial->writeFrame(out_frame, 1 + rlen);
   } else if (cmd_frame[0] == CMD_SEND_TXT_MSG && len >= 14) {
     int i = 1;
     uint8_t txt_type = cmd_frame[i++];
@@ -2131,6 +2105,7 @@ void MyMesh::enterCLIRescue() {
 }
 
 bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char* reply) {
+  const char* reply_start = reply;
   while (*command == ' ') command++; // skip leading spaces
 
   if (strlen(command) > 3 && command[2] == '|') { // optional prefix (for companion radio CLI)
@@ -2148,7 +2123,8 @@ bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char*
   }
 
 #if defined(OFFBAND_OBSERVER) || defined(OFFBAND_WEB_PORTAL)
-  if (offband::OffbandExtension::instance().handleCommand(command, reply, 760)) {
+  size_t avail = 172 - (size_t)(reply - reply_start);
+  if (offband::OffbandExtension::instance().handleCommand(command, reply, avail)) {
     return true;
   }
 #endif

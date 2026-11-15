@@ -658,15 +658,15 @@ size_t formatBrokerConfig(uint8_t slot, const BrokerConfig& cfg,
 
     CW_VIEW_APPEND("[%u] %s %s/%s :%u\n",
                    (unsigned)slot,
-                   cfg.enabled ? "ENABLED" : "disabled",
+                   cfg.enabled ? "ON" : "off",
                    brokerTransportName(cfg.transport),
                    brokerAuthName(cfg.auth_type),
                    (unsigned)cfg.port);
-    CW_VIEW_APPEND("url=%s\n", cfg.url[0] ? cfg.url : "(unset)");
+    CW_VIEW_APPEND("url=%.42s\n", cfg.url[0] ? cfg.url : "(unset)");
 
     if (is_jwt) {
         // username auto-derives at connect (v1_+pubkey) when unset.
-        CW_VIEW_APPEND("user=%s aud=%s\n",
+        CW_VIEW_APPEND("user=%.14s aud=%.24s\n",
                        cfg.username[0] ? cfg.username : "auto",
                        cfg.jwt_audience[0] ? cfg.jwt_audience : "(unset)");
         // jwt_owner: explicit value, else the connect-time default = this
@@ -676,14 +676,14 @@ size_t formatBrokerConfig(uint8_t slot, const BrokerConfig& cfg,
         } else {
             CW_VIEW_APPEND("own=%s\n", cfg.jwt_owner[0] ? cfg.jwt_owner : "auto(dev-key)");
         }
-        CW_VIEW_APPEND("eml=%s ref=%us ca=%s iata=%s",
+        CW_VIEW_APPEND("eml=%.16s ref=%us ca=%s iata=%s",
                        cfg.jwt_email[0]     ? cfg.jwt_email     : "(unset)",
                        (unsigned)cfg.jwt_refresh_sec,
                        cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "none",
                        cfg.iata_override[0] ? cfg.iata_override : "global");
     } else if (cfg.auth_type == BrokerAuthType::Basic) {
         // password redacted to set/unset -- never the value (CLAUDE.md).
-        CW_VIEW_APPEND("user=%s pwd=%s\n",
+        CW_VIEW_APPEND("user=%.14s pwd=%s\n",
                        cfg.username[0] ? cfg.username : "(unset)",
                        cfg.password[0] ? "(set)" : "(unset)");
         CW_VIEW_APPEND("ca=%s iata=%s",

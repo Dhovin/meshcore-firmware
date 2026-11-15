@@ -173,66 +173,105 @@ static const char* shortUrl(const char* url) {
     return url;
 }
 
+static void extractHost(const char* url, char* out, size_t out_size) {
+    if (out == nullptr || out_size == 0) return;
+    const char* p = shortUrl(url);
+    size_t i = 0;
+    while (p[i] != '\0' && p[i] != ':' && p[i] != '/' && i + 1 < out_size) {
+        out[i] = p[i];
+        ++i;
+    }
+    out[i] = '\0';
+}
+
+static const char* compactStateStr(BrokerState s, BrokerErrorClass err) {
+    switch (s) {
+        case BrokerState::Up:          return "UP";
+        case BrokerState::Connecting:  return "conn";
+        case BrokerState::Backoff:
+            if (err == BrokerErrorClass::Tls)  return "retry/tls";
+            if (err == BrokerErrorClass::Auth) return "retry/auth";
+            if (err == BrokerErrorClass::Tcp)  return "retry/tcp";
+            return "retry";
+        case BrokerState::HeldNoClock: return "no-clk";
+        case BrokerState::HeldNoHeap:  return "low-mem";
+        case BrokerState::HeldBudget:  return "queued";
+        case BrokerState::Failed:      return "FAIL";
+        case BrokerState::Down:
+        default:                       return "down";
+    }
+}
+
 // "mqtt status [N]" -- summary of pool + per-slot.
 static bool handleStatus(char* reply, size_t reply_size, MqttBrokerPool& pool, int filter_slot = -1) {
-    int n = snprintf(reply, reply_size, "mqtt: cfg=%u en=%u up=%u\n",
-                     pool.configuredCount(), pool.enabledCount(), pool.upCount());
-#ifdef OFFBAND_OBSERVER
-    // #1399: the periodic /neighbors report, ahead of the broker lines so a long
-    // broker list cannot cut it off.
-    if (filter_slot < 0 && n >= 0 && (size_t)n < reply_size) {
-        n += (int)formatNeighborsStatusLine(reply + n, reply_size - (size_t)n);
+    if (filter_slot >= 0) {
+        const MqttBroker& b = pool.broker((uint8_t)filter_slot);
+        if (!b.isConfigured()) {
+            snprintf(reply, reply_size, "[%d] unconfigured\n", filter_slot);
+            return true;
+        }
+        const BrokerConfig& cfg = b.config();
+        const BrokerRuntimeState& rt = b.runtime();
+        snprintf(reply, reply_size,
+                 "[%d] %s %s/%s %.40s\nstate=%s err=%s r=%u\nown=%c eml=%c ca=%s aud=%c",
+                 filter_slot,
+                 cfg.enabled ? "ON" : "off",
+                 transportStr(cfg.transport), authStr(cfg.auth_type),
+                 shortUrl(cfg.url),
+                 stateStr(rt.state), brokerErrorWire(rt.last_error_class), (unsigned)rt.retry_count,
+                 cfg.jwt_owner[0] ? 'Y' : 'N',
+                 cfg.jwt_email[0] ? 'Y' : 'N',
+                 cfg.ca_cert_name[0] ? cfg.ca_cert_name : "NONE",
+                 cfg.jwt_audience[0] ? 'Y' : 'N');
+        return true;
     }
-#endif
-    const bool any_enabled = (pool.enabledCount() > 0);
+
+    const uint8_t cfg_cnt = pool.configuredCount();
+    const uint8_t en_cnt  = pool.enabledCount();
+    const uint8_t up_cnt  = pool.upCount();
+    int n = snprintf(reply, reply_size, "mqtt: %ucfg %uen %uup\n",
+                     (unsigned)cfg_cnt, (unsigned)en_cnt, (unsigned)up_cnt);
+    const bool compact_lines = (en_cnt > 1 || cfg_cnt > 5);
+    uint8_t seen_cfg = 0;
     for (uint8_t slot = 0; slot < OFFBAND_MAX_BROKERS; ++slot) {
-        if (filter_slot >= 0 && (int)slot != filter_slot) continue;
         const MqttBroker& b = pool.broker(slot);
         if (!b.isConfigured()) continue;
+        ++seen_cfg;
         if (n < 0 || (size_t)n >= reply_size) break;
         const BrokerConfig& cfg = b.config();
         const BrokerRuntimeState& rt = b.runtime();
-        const bool verbose = cfg.enabled || (filter_slot == (int)slot) || (!any_enabled && slot == 0);
-        const char* url_disp = shortUrl(cfg.url);
-        if (!verbose) {
-            n += snprintf(reply + n, reply_size - (size_t)n,
-                          "  [%u] off %s/%s %s\n",
-                          slot,
-                          transportStr(cfg.transport), authStr(cfg.auth_type),
-                          url_disp);
-            continue;
-        }
-        n += snprintf(reply + n, reply_size - (size_t)n,
-                      "  [%u] %s %s/%s %s state=%s r=%u",
-                      slot,
-                      cfg.enabled ? "ON" : "off",
-                      transportStr(cfg.transport), authStr(cfg.auth_type),
-                      url_disp, stateStr(rt.state), (unsigned)rt.retry_count);
-        // #63: jwt slots show whether the owner/email identity claims are set
-        // (Y/N only -- values via the set echo; keeps the line frame-sized).
-        if (cfg.auth_type == BrokerAuthType::Jwt && n >= 0 && (size_t)n < reply_size) {
-            n += snprintf(reply + n, reply_size - (size_t)n, " own=%c eml=%c",
-                          cfg.jwt_owner[0] ? 'Y' : 'N',
-                          cfg.jwt_email[0] ? 'Y' : 'N');
-        }
-        // #66: on TLS/WSS slots surface the trust source (and JWT audience
-        // presence). cert=NONE on a wss slot is the smoking gun for a missing
-        // CA -- TLS handshakes then fail into permanent backoff while every
-        // other visible field looks correct.
-        if ((cfg.transport == BrokerTransport::Tls ||
-             cfg.transport == BrokerTransport::Wss) &&
-            n >= 0 && (size_t)n < reply_size) {
-            n += snprintf(reply + n, reply_size - (size_t)n, " ca=%s",
-                          cfg.ca_cert_name[0] ? cfg.ca_cert_name : "NONE");
-            if (cfg.auth_type == BrokerAuthType::Jwt &&
-                n >= 0 && (size_t)n < reply_size) {
-                n += snprintf(reply + n, reply_size - (size_t)n, " aud=%c",
-                              cfg.jwt_audience[0] ? 'Y' : 'N');
+        char host[20];
+        extractHost(cfg.url, host, compact_lines ? 16 : sizeof(host));
+        char line[48];
+        int ln = 0;
+        if (cfg.enabled) {
+            if (!compact_lines) {
+                ln = snprintf(line, sizeof(line), "[%u] %s %s/%s %s\n",
+                              (unsigned)slot,
+                              compactStateStr(rt.state, rt.last_error_class),
+                              transportStr(cfg.transport), authStr(cfg.auth_type),
+                              host);
+            } else {
+                ln = snprintf(line, sizeof(line), "[%u] %s %s\n",
+                              (unsigned)slot,
+                              compactStateStr(rt.state, rt.last_error_class),
+                              host);
             }
+        } else {
+            ln = snprintf(line, sizeof(line), "[%u] off %s\n",
+                          (unsigned)slot, host);
         }
-        if (n >= 0 && (size_t)n < reply_size) {
-            n += snprintf(reply + n, reply_size - (size_t)n, "\n");
+        if (ln <= 0) continue;
+        const uint8_t rem_slots = (cfg_cnt > seen_cfg) ? (cfg_cnt - seen_cfg) : 0;
+        const size_t reserve = (rem_slots > 0) ? 10 : 1;
+        if ((size_t)n + (size_t)ln + reserve > reply_size) {
+            snprintf(reply + n, reply_size - (size_t)n, "+%u more\n",
+                     (unsigned)(rem_slots + 1));
+            break;
         }
+        memcpy(reply + n, line, (size_t)ln);
+        n += ln;
+        reply[n] = '\0';
     }
     return true;
 }
