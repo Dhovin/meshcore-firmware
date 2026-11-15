@@ -164,29 +164,50 @@ static const char* brokerErrorWire(BrokerErrorClass e) {
 // Subcommand handlers
 // ---------------------------------------------------------------------------
 
-// "mqtt status" -- summary of pool + per-slot.
-static bool handleStatus(char* reply, size_t reply_size, MqttBrokerPool& pool) {
-    int n = snprintf(reply, reply_size, "mqtt: configured=%u enabled=%u up=%u\n",
+static const char* shortUrl(const char* url) {
+    if (url == nullptr) return "";
+    if (strncmp(url, "wss://", 6) == 0)   return url + 6;
+    if (strncmp(url, "ws://", 5) == 0)    return url + 5;
+    if (strncmp(url, "mqtts://", 8) == 0) return url + 8;
+    if (strncmp(url, "mqtt://", 7) == 0)  return url + 7;
+    return url;
+}
+
+// "mqtt status [N]" -- summary of pool + per-slot.
+static bool handleStatus(char* reply, size_t reply_size, MqttBrokerPool& pool, int filter_slot = -1) {
+    int n = snprintf(reply, reply_size, "mqtt: cfg=%u en=%u up=%u\n",
                      pool.configuredCount(), pool.enabledCount(), pool.upCount());
 #ifdef OFFBAND_OBSERVER
     // #1399: the periodic /neighbors report, ahead of the broker lines so a long
     // broker list cannot cut it off.
-    if (n >= 0 && (size_t)n < reply_size) {
+    if (filter_slot < 0 && n >= 0 && (size_t)n < reply_size) {
         n += (int)formatNeighborsStatusLine(reply + n, reply_size - (size_t)n);
     }
 #endif
+    const bool any_enabled = (pool.enabledCount() > 0);
     for (uint8_t slot = 0; slot < OFFBAND_MAX_BROKERS; ++slot) {
+        if (filter_slot >= 0 && (int)slot != filter_slot) continue;
         const MqttBroker& b = pool.broker(slot);
         if (!b.isConfigured()) continue;
         if (n < 0 || (size_t)n >= reply_size) break;
         const BrokerConfig& cfg = b.config();
         const BrokerRuntimeState& rt = b.runtime();
+        const bool verbose = cfg.enabled || (filter_slot == (int)slot) || (!any_enabled && slot == 0);
+        const char* url_disp = shortUrl(cfg.url);
+        if (!verbose) {
+            n += snprintf(reply + n, reply_size - (size_t)n,
+                          "  [%u] off %s/%s %s\n",
+                          slot,
+                          transportStr(cfg.transport), authStr(cfg.auth_type),
+                          url_disp);
+            continue;
+        }
         n += snprintf(reply + n, reply_size - (size_t)n,
-                      "  [%u] %s %s/%s url=%s state=%s retries=%u",
+                      "  [%u] %s %s/%s %s state=%s r=%u",
                       slot,
-                      cfg.enabled ? "ENABLED" : "disabled",
+                      cfg.enabled ? "ON" : "off",
                       transportStr(cfg.transport), authStr(cfg.auth_type),
-                      cfg.url, stateStr(rt.state), (unsigned)rt.retry_count);
+                      url_disp, stateStr(rt.state), (unsigned)rt.retry_count);
         // #63: jwt slots show whether the owner/email identity claims are set
         // (Y/N only -- values via the set echo; keeps the line frame-sized).
         if (cfg.auth_type == BrokerAuthType::Jwt && n >= 0 && (size_t)n < reply_size) {
@@ -201,7 +222,7 @@ static bool handleStatus(char* reply, size_t reply_size, MqttBrokerPool& pool) {
         if ((cfg.transport == BrokerTransport::Tls ||
              cfg.transport == BrokerTransport::Wss) &&
             n >= 0 && (size_t)n < reply_size) {
-            n += snprintf(reply + n, reply_size - (size_t)n, " cert=%s",
+            n += snprintf(reply + n, reply_size - (size_t)n, " ca=%s",
                           cfg.ca_cert_name[0] ? cfg.ca_cert_name : "NONE");
             if (cfg.auth_type == BrokerAuthType::Jwt &&
                 n >= 0 && (size_t)n < reply_size) {
@@ -666,8 +687,21 @@ bool dispatchObserverCli(const char* cmd, char* reply, size_t reply_size,
     // "mqtt ..." commands
     const char* rest = skipPrefix(cmd, "mqtt");
     if (rest != nullptr) {
-        if (eq(rest, "status") || *rest == '\0') {
-            return handleStatus(reply, reply_size, pool);
+        const char* st_rest = skipPrefix(rest, "status");
+        if (st_rest != nullptr) {
+            if (*st_rest == '\0') {
+                return handleStatus(reply, reply_size, pool, -1);
+            }
+            int slot = parseSlot(st_rest);
+            if (slot < 0) {
+                snprintf(reply, reply_size, "ERROR: usage: mqtt status [0..%d]\n",
+                         OFFBAND_MAX_BROKERS - 1);
+                return true;
+            }
+            return handleStatus(reply, reply_size, pool, slot);
+        }
+        if (*rest == '\0') {
+            return handleStatus(reply, reply_size, pool, -1);
         }
         const char* en_rest = skipPrefix(rest, "enable");
         if (en_rest != nullptr) {

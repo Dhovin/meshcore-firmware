@@ -259,7 +259,7 @@ private:
   bool _cli_rescue;
   bool send_unscoped;   // force un-scoped flood (instead of using send_scope)
   char cli_command[80];
-  char reply_buf[166];
+  char reply_buf[768];
   uint8_t app_target_ver;
   uint8_t *sign_data;
   uint32_t sign_data_len;

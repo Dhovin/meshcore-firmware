@@ -656,41 +656,44 @@ size_t formatBrokerConfig(uint8_t slot, const BrokerConfig& cfg,
     // old "mqtt.broker.N:" header). JWT fields render only for jwt brokers.
     const bool is_jwt = (cfg.auth_type == BrokerAuthType::Jwt);
 
-    CW_VIEW_APPEND("mqtt.broker.%u  %s\n",
-                   (unsigned)slot, cfg.enabled ? "ENABLED" : "disabled");
-    CW_VIEW_APPEND("url=%s\n", cfg.url[0] ? cfg.url : "(unset)");
-    CW_VIEW_APPEND("port=%u transport=%s auth_type=%s\n",
-                   (unsigned)cfg.port,
+    CW_VIEW_APPEND("[%u] %s %s/%s :%u\n",
+                   (unsigned)slot,
+                   cfg.enabled ? "ENABLED" : "disabled",
                    brokerTransportName(cfg.transport),
-                   brokerAuthName(cfg.auth_type));
+                   brokerAuthName(cfg.auth_type),
+                   (unsigned)cfg.port);
+    CW_VIEW_APPEND("url=%s\n", cfg.url[0] ? cfg.url : "(unset)");
 
     if (is_jwt) {
         // username auto-derives at connect (v1_+pubkey) when unset.
-        CW_VIEW_APPEND("username=%s jwt_audience=%s\n",
-                       cfg.username[0] ? cfg.username : "auto(v1_+pubkey)",
+        CW_VIEW_APPEND("user=%s aud=%s\n",
+                       cfg.username[0] ? cfg.username : "auto",
                        cfg.jwt_audience[0] ? cfg.jwt_audience : "(unset)");
         // jwt_owner: explicit value, else the connect-time default = this
-        // device's own pubkey (#95). Own line (64 hex).
-        CW_VIEW_APPEND("jwt_owner=%s\n",
-                       cfg.jwt_owner[0] ? cfg.jwt_owner : "auto(device-pubkey)");
-        CW_VIEW_APPEND("jwt_email=%s jwt_refresh=%u ca_cert=%s iata=%s\n",
+        // device's own pubkey (#95).
+        if (cfg.jwt_owner[0] && strlen(cfg.jwt_owner) > 16) {
+            CW_VIEW_APPEND("own=%.8s..%s\n", cfg.jwt_owner, cfg.jwt_owner + strlen(cfg.jwt_owner) - 6);
+        } else {
+            CW_VIEW_APPEND("own=%s\n", cfg.jwt_owner[0] ? cfg.jwt_owner : "auto(dev-key)");
+        }
+        CW_VIEW_APPEND("eml=%s ref=%us ca=%s iata=%s",
                        cfg.jwt_email[0]     ? cfg.jwt_email     : "(unset)",
                        (unsigned)cfg.jwt_refresh_sec,
-                       cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "(none)",
-                       cfg.iata_override[0] ? cfg.iata_override : "(global)");
+                       cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "none",
+                       cfg.iata_override[0] ? cfg.iata_override : "global");
     } else if (cfg.auth_type == BrokerAuthType::Basic) {
         // password redacted to set/unset -- never the value (CLAUDE.md).
-        CW_VIEW_APPEND("username=%s password=%s\n",
+        CW_VIEW_APPEND("user=%s pwd=%s\n",
                        cfg.username[0] ? cfg.username : "(unset)",
                        cfg.password[0] ? "(set)" : "(unset)");
-        CW_VIEW_APPEND("ca_cert=%s iata=%s\n",
-                       cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "(none)",
-                       cfg.iata_override[0] ? cfg.iata_override : "(global)");
+        CW_VIEW_APPEND("ca=%s iata=%s",
+                       cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "none",
+                       cfg.iata_override[0] ? cfg.iata_override : "global");
     } else {
         // None (anon, e.g. CoreScope): no credentials.
-        CW_VIEW_APPEND("ca_cert=%s iata=%s\n",
-                       cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "(none)",
-                       cfg.iata_override[0] ? cfg.iata_override : "(global)");
+        CW_VIEW_APPEND("ca=%s iata=%s",
+                       cfg.ca_cert_name[0]  ? cfg.ca_cert_name  : "none",
+                       cfg.iata_override[0] ? cfg.iata_override : "global");
     }
 
     // snprintf returns the would-be length, so on truncation n can exceed
